@@ -456,12 +456,15 @@ print.MVL_OBJECT<-function(x, ..., small_length=10) {
 		if(missing(i)) {
 			i<-1:(obj[["metadata"]][["dim"]][1])
 			}
+		if(is.logical(i)) {
+			i<-which(i)
+			}
 		if(...length()<1 || missing(..1)) {
 			j<-1:length(n)
 			} else {
 			j<-..1
 			if(is.logical(j)) {
-				j<-(1:length(n))[j]
+				j<-which(j)
 				} else
 			if(is.character(j) || is.factor(j)) {
 				if(is.factor(j))j<-as.character(j)
@@ -534,7 +537,7 @@ print.MVL_OBJECT<-function(x, ..., small_length=10) {
 		}
 	if(...length()==0) {
 		if(is.logical(i)) {
-			i<-(1:length(i))[i]
+			i<-which(i)
 			}
 		if(is.factor(i))i<-as.character(i)
 		if(is.character(i)) {
