@@ -427,6 +427,27 @@ print.MVL_OBJECT<-function(x, ..., small_length=10) {
 	invisible(obj)
 	}
 	
+#' Obtain dimensions of MVL object
+#' 
+#' @param x MVL_OBJECT as retrieved by subscription operators
+#' @return object dimensions, or NULL if not present
+#'
+#' @export
+dim.MVL_OBJECT<-function(x) {
+	if(is.null(x[["metadata"]]))stop("Malformed MVL_OBJECT: missing metadata")
+	return(x[["metadata"]][["dim"]])
+	}
+	
+#' Obtain length of MVL object
+#' 
+#' @param x MVL_OBJECT as retrieved by subscription operators
+#' @return object length as stored in MVL file. This is the total length of object for arrays, and number of columns for data frames.
+#'
+#' @export
+length.MVL_OBJECT<-function(x) {
+	return(x[["length"]])
+	}
+	
 # We are exporting plain function as well, so one can list its source code from command line
 #' MVL object subscription operator
 #'
@@ -502,6 +523,7 @@ print.MVL_OBJECT<-function(x, ..., small_length=10) {
 			d<-od[1]
 			idx<-0:(od[1]-1)
 			} else {
+			if(is.logical(i))i<-which(i)
 			d<-length(i)
 			idx<-i-1
 			}
@@ -517,6 +539,7 @@ print.MVL_OBJECT<-function(x, ..., small_length=10) {
 					d<-c(d, od[j+1])
 					ii<-1:od[j+1]
 					} else {
+					if(is.logical(ii))ii<-which(ii)
 					d<-c(d, length(ii))
 					}
 				mult<-mult*od[j]
