@@ -497,21 +497,22 @@ length.MVL_OBJECT<-function(x) {
 			n<-n[j]
 			}
 		if(raw)
-			ofs<-.Call("read_vectors_raw", obj[["handle"]], obj[["offset"]])[[1]][j]
+			ofs<-.Call("read_vectors_idx_raw_real", obj[["handle"]], obj[["offset"]], as.numeric(j-1))[[1]]
 			else
-			ofs<-.Call("read_vectors", obj[["handle"]], obj[["offset"]])[[1]][j]
-#		vec<-.Call("read_vectors", obj[["handle"]], ofs)
+			ofs<-.Call("read_vectors_idx_real", obj[["handle"]], obj[["offset"]], as.numeric(j-1))[[1]]
 		df<-lapply(ofs, function(x){class(x)<-"MVL_OFFSET" ; return(mvl_read_object(obj, x, idx=list(as.numeric(i-1))))})
 		names(df)<-n
 		class(df)<-"data.frame"
 		if(dim(df)[2]==1 && !is.null(drop) && drop)return(df[,1])
 		
-		rn<-obj[["metadata"]][["rownames"]]
-		if(class(rn)=="MVL_OBJECT") {
-			rn<-mvl_flatten_string(rn[i, recurse=TRUE])
-			rownames(df)<-rn
-			} else {
-			rownames(df)<-1:(length(i))
+		if(length(i)>0) {
+			rn<-obj[["metadata"]][["rownames"]]
+			if(class(rn)=="MVL_OBJECT") {
+				rn<-mvl_flatten_string(rn[i, recurse=TRUE])
+				rownames(df)<-rn
+				} else {
+				rownames(df)<-1:(length(i))
+				}
 			}
 		return(df)
 		}

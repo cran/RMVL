@@ -2,6 +2,9 @@
 #ifndef __WIN32__
 #include <sys/mman.h>
 #else
+#include <windows.h>
+#include <winbase.h>
+#include <io.h>
 #endif
 #include <errno.h>
 #include "libMVL.h"
@@ -14,6 +17,10 @@ typedef struct {
 	char *data;
 	LIBMVL_OFFSET64 length;
 	LIBMVL_CONTEXT *ctx;
+#ifdef __WIN32__
+	HANDLE f_handle;
+	HANDLE f_map_handle;
+#endif
 	int modified;
 	} MMAPED_LIBRARY;
 	
@@ -23,8 +30,7 @@ int libraries_free=0;
 
 SEXP mmap_library(SEXP filename, SEXP mode0)
 {
-LIBMVL_OFFSET64 length, offset;
-int i, count, mode;
+int i, mode;
 int idx;
 MMAPED_LIBRARY *p;
 const char *fn;
@@ -68,6 +74,26 @@ fn=CHAR(asChar(filename));
 p=&libraries[idx];
 memset(p, 0, sizeof(*p));
 
+#ifdef __WIN32__
+switch(mode) {
+	case 0:
+		p->f=fopen(fn, "rb");
+		break;
+	case 1:
+		p->f=fopen(fn, "rb+");
+		break;
+	case 2: 
+		p->f=fopen(fn, "wb");
+		break;
+	case 3:
+		p->f=fopen(fn, "wb+");
+		break;
+	default:
+		error("Unknown mode %d", mode);
+		return(R_NilValue);
+		
+	}
+#else 
 switch(mode) {
 	case 0:
 		p->f=fopen(fn, "r");
@@ -86,6 +112,7 @@ switch(mode) {
 		return(R_NilValue);
 		
 	}
+#endif
 if(p->f==NULL) {
 	error("Opening MVL library \"%s\": %s", fn, strerror(errno));
 	return(R_NilValue);
@@ -99,14 +126,40 @@ p->ctx=mvl_create_context();
 p->ctx->f=p->f;
 
 if(p->length>0) {
-#ifndef __WIN32__
-	p->data=mmap(NULL, libraries[idx].length, PROT_READ, MAP_SHARED, fileno(p->f), 0);
+#ifdef __WIN32__
+	p->f_handle=(HANDLE)_get_osfhandle(fileno(p->f));
+	if(p->f_handle==NULL) {
+		error("Cannot obtain Win32 file handle");
+		fclose(p->f);
+		p->f=NULL;
+		return(R_NilValue);
+		}
+	
+	p->f_map_handle=CreateFileMappingA(p->f_handle, NULL, PAGE_READONLY, 0, 0, NULL);
+	if(p->f_map_handle==NULL) {
+		error("Cannot obtain Win32 file mapping object");
+		fclose(p->f);
+		p->f=NULL;
+		return(R_NilValue);
+		}
+		
+	p->data=MapViewOfFile(p->f_map_handle, FILE_MAP_READ, 0, 0, p->length);
+	if(p->data==NULL) {
+		error("Cannot create Win32 File mapping view");
+		fclose(p->f);
+		p->f=NULL;
+		return(R_NilValue);
+		}
+
+#else
+	p->data=mmap(NULL, p->length, PROT_READ, MAP_SHARED, fileno(p->f), 0);
 	if(p->data==NULL) {
 		error("Memory mapping MVL library: %s", strerror(errno));
 		fclose(p->f);
 		p->f=NULL;
 		return(R_NilValue);
 		}
+#endif
 	mvl_load_image(p->ctx, p->length, p->data);
 	fseek(p->f, 0, SEEK_END);
 	if(mode==0) {
@@ -115,9 +168,6 @@ if(p->length>0) {
 		p->f=NULL;
 		p->ctx->f=NULL;
 		}
-#else
-	error("Memory map on windows not supported yet");
-#endif
 	} else {
 	mvl_write_preamble(p->ctx);
 	p->modified=1;
@@ -149,7 +199,8 @@ if(p->data!=NULL) {
 #ifndef __WIN32__
 	munmap(p->data, p->length);
 #else
-	error("Memory map on Windows not supported yet");
+	UnmapViewOfFile(p->data);
+	CloseHandle(p->f_map_handle);
 #endif
 	p->data=NULL;
 	}
