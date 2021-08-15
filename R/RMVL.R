@@ -103,6 +103,32 @@ mvl_write_vector<-function(MVLHANDLE, x, metadata.offset=NULL) {
 	stop("Could not write vector with class ", class(x))
 	}
 
+mvl_fused_write_vector<-function(MVLHANDLE, L, metadata.offset=NULL) {
+	if(!inherits(MVLHANDLE, "MVL")) stop("not an MVL object")
+	if(!is.null(metadata.offset) && !inherits(metadata.offset, "MVL_OFFSET"))stop("not an MVL offset")
+	
+	if(length(L)>0) {
+		for(i in 1:length(L)) {
+			if(class(L[[i]])=="factor")L[[i]]<-as.character(L[[i]])
+			}
+		type<-attr(L[[1]], "MVL_TYPE", exact=TRUE)
+		if(is.null(type) && class(L[[1]])=="MVL_OBJECT") {
+			type<-mvl_object_stats(L[[1]])[["type"]]
+			if(type==102)type<-10000
+			}
+		if(is.null(type)) {
+			type<-switch(class(L[[1]]), raw=1, numeric=5, integer=2, MVL_OFFSET=100, character=10000, -1)
+			if(type<0 && class(L[[1]]) %in% c("array", "matrix"))type<-switch(typeof(L[[1]]), double=5, integer=2, -1)
+			}
+		} else {
+		type<-5
+		}
+	if(type>0) {
+		return(.Call("fused_write_vector", MVLHANDLE[["handle"]], as.integer(type), L, metadata.offset)) 
+		}
+	stop("Could not write vector")
+	}
+	
 mvl_write_string<-function(MVLHANDLE, x, metadata.offset=NULL) {
 	if(!inherits(MVLHANDLE, "MVL")) stop("not an MVL object")
 	if(!is.null(metadata.offset) && !inherits(metadata.offset, "MVL_OFFSET"))stop("not an MVL offset")
@@ -111,16 +137,19 @@ mvl_write_string<-function(MVLHANDLE, x, metadata.offset=NULL) {
 	return(.Call("write_vector", MVLHANDLE[["handle"]], as.integer(10001), x, metadata.offset)) 
 	}
 	
-mvl_write_object_metadata<-function(MVLHANDLE, x, drop.rownames=FALSE) {
+mvl_write_object_metadata<-function(MVLHANDLE, x, drop.rownames=FALSE, dim.override=NULL) {
 	n<-mvl_write_string(MVLHANDLE, "MVL_LAYOUT")
 	o<-mvl_write_string(MVLHANDLE, "R")
-	if(!is.null(dim(x))) {
+	if(!is.null(dim(x)) || !is.null(dim.override)) {
 		n<-c(n, mvl_write_string(MVLHANDLE, "dim"))
-		o<-c(o, mvl_write_vector(MVLHANDLE, dim(x)))
+		if(!is.null(dim.override))
+			o<-c(o, mvl_write_vector(MVLHANDLE, dim.override))
+			else
+			o<-c(o, mvl_write_vector(MVLHANDLE, dim(x)))
 		}
-	if(!is.null(class(x)) && !(class(x) %in% c("raw", "numeric", "integer"))) {
+	if(!is.null(class(x)) && !(mvl_class(x) %in% c("raw", "numeric", "integer"))) {
 		n<-c(n, mvl_write_string(MVLHANDLE, "class"))
-		o<-c(o, mvl_write_string(MVLHANDLE, class(x)))
+		o<-c(o, mvl_write_string(MVLHANDLE, mvl_class(x)))
 		}
 	if(!is.null(names(x))) {
 		n<-c(n, mvl_write_string(MVLHANDLE, "names"))
@@ -135,14 +164,39 @@ mvl_write_object_metadata<-function(MVLHANDLE, x, drop.rownames=FALSE) {
 	class(ofs)<-"MVL_OFFSET"
 	return(mvl_write_vector(MVLHANDLE, ofs))
 	}
+	
+#' Return underlying R class of object
+#'
+#' This function returns the equivalent R class of underlying MVL object, i.e. the class it would have if converted into a regular R object.
+#' For non-MVL objects the function simply calls the usual R class(), so it can be used instead of class() for code that operates on both usual R objects and MVL objects.
+#'
+#' @param x  any object
+#' @return character string giving object class
+#'  
+#' @export
+#'
+mvl_class<-function(x) {
+	if(class(x)!="MVL_OBJECT")return(class(x))
+	m<-x[["metadata"]]
+	if(is.null(m) || is.null(m[["class"]])) {
+		st<-mvl_object_stats(x)
+		if(st[["type"]] %in% c(1,2))return("integer")
+			else
+		if(st[["type"]] %in% c(3,4,5))return("numeric")
+			else
+		if(st[["type"]] %in% c(102))return("character")
+		return("MVL_OBJECT")
+		}
+	return(m[["class"]])
+	}
 
-#' Write R objects into MVL file
+#' Write R object into MVL file
 #'
 #' @param MVLHANDLE a handle to MVL file produced by mvl_open()
 #' @param x a suitable R object (vector, array, list, data.frame)
 #' @param name if specified add a named entry to MVL file directory
 #' @param drop.rownames set to TRUE to prevent rownames from being written
-#' @return and object of class MVL_OFFSET that describes an offset into this MVL file. MVL offsets are vectors and can be concatenated. They can be written to MVL file directly, or as part of another object such as list.
+#' @return an object of class MVL_OFFSET that describes an offset into this MVL file. MVL offsets are vectors and can be concatenated. They can be written to MVL file directly, or as part of another object such as list.
 #'  
 #' @export
 #'
@@ -168,6 +222,89 @@ mvl_write_object<-function(MVLHANDLE, x, name=NULL, drop.rownames=FALSE) {
 	stop("Could not write object with class ", class(x))
 	}
 	
+#' Write concatenated R objects and write result into MVL file. 
+#'
+#' This function can concatenate a mixture of R and MVL objects. For vectors it is the equivalent of \code{c()}. For array and matrices it works as \code{cbind()}
+#' For data frames it works as \code{rbind}, but row names are always dropped.
+#'
+#' @param MVLHANDLE a handle to MVL file produced by \code{mvl_open()}
+#' @param L a list of suitable R objects (vector, array, data.frame) or equivalent MVL objects.
+#' @param name if specified add a named entry to MVL file directory
+#' @param drop.rownames set to TRUE to prevent rownames from being written
+#' @return and object of class MVL_OFFSET that describes an offset into this MVL file. MVL offsets are vectors and can be concatenated. They can be written to MVL file directly, or as part of another object such as list.
+#'  
+#' @export
+#'
+mvl_fused_write_objects<-function(MVLHANDLE, L, name=NULL, drop.rownames=TRUE) {
+	#cat("Writing", class(x), typeof(x), "\n")
+	if(length(L)<1)stop("No objects to concatenate")
+	if(!drop.rownames)stop("Cannot write out row names")
+	
+	cl<-mvl_class(L[[1]])
+		
+	dims<-lapply(L, dim)
+	dimnull<-unlist(lapply(dims, is.null))
+	if(any(dimnull) && any(!dimnull))stop("Cannot concatenate: some objects have dimensions some not")
+	
+	lengths<-lapply(L, length)
+	if(is.null(dims[[1]]))dims<-lengths
+	
+	if(length(L)>1) {
+		kd<-length(dims[[1]])
+		if(kd>1) {
+			if(mvl_class(L[[1]]) %in% c("data.frame")) idx<-2:kd
+				else idx<-1:(kd-1)
+			for(i in 2:length(L)) {
+				if(any(dims[[i]][idx]!=dims[[1]][idx]))stop("Cannot concatenate: inconsistent dimensions for objects 1 and ", i, ": ", paste(dims[[1]], collapse=","), " ", paste(dims[[i]], collapse=","))
+				}
+			}
+		}
+	
+	
+	if(cl %in% c("numeric", "character", "integer", "factor", "raw", "array", "matrix")) {
+		dims_new<-dim(L[[1]])
+		if(!is.null(dims_new)) {
+			if(length(dims_new)>1) {
+				dims_new<-c(dims_new[1:(length(dims_new)-1)], sum(unlist(lapply(dims, function(x){return(x[[length(dims_new)]])}))))
+				} else {
+				dims_new<-sum(unlist(dims))
+				}
+			}
+		metadata<-mvl_write_object_metadata(MVLHANDLE, L[[1]], drop.rownames=drop.rownames, dim.override=dims_new)
+		offset<-mvl_fused_write_vector(MVLHANDLE, L, metadata)
+		if(!is.null(name))mvl_add_directory_entries(MVLHANDLE, name, offset)
+		return(invisible(offset))
+		}
+	if(cl %in% c("data.frame")) {
+		dims_new<-dim(L[[1]])
+		if(!is.null(dims_new)) {
+			if(length(dims_new)>1) {
+				dims_new<-c(sum(unlist(lapply(dims, function(x){return(x[[1]])}))), dims_new[2:length(dims_new)])
+				} else {
+				dims_new<-sum(unlist(dims))
+				}
+			}
+		metadata<-mvl_write_object_metadata(MVLHANDLE, L[[1]], drop.rownames=drop.rownames, dim.override=dims_new)
+		v<-list()
+		for(i in 1:length(L[[1]])) {
+			Lcol<-lapply(L, function(x){
+				if(class(x)!="MVL_OBJECT") {
+					if(class(x[[i]])=="factor")return(as.character(x[[i]]))
+					return(x[[i]])
+					}
+				return(x[,i,ref=TRUE]) 
+				})
+			v[[i]]<-mvl_fused_write_objects(MVLHANDLE, Lcol)
+			}
+		v<-unlist(v)
+		class(v)<-"MVL_OFFSET"
+		offset<-mvl_write_vector(MVLHANDLE, v, metadata)
+		if(!is.null(name))mvl_add_directory_entries(MVLHANDLE, name, offset)
+		return(invisible(offset))
+		}
+	stop("Could not perform fused write of ", length(L), " objects")
+	}
+	
 mvl_flatten_string<-function(v) {
 	return(unlist(lapply(v, function(x){return(x[[1]])})))
 	}
@@ -189,8 +326,8 @@ mvl_read_metadata<-function(MVLHANDLE, metadata_offset) {
 #' This function is given either an MVL handle and an offset in MVL file to examine, or just a single parameter of class MVL_OBJECT that contains
 #'  both handle and offset
 #'
-#' The function returns list of object parameters including total number of element, element type (as used by libMVL) and a pointer to the underlying data
-#' The pointer is passed cast to double and can be used with custom C code, for example by using package inline.
+#' The function returns list of object parameters including total number of elements, element type (as used by libMVL) and a pointer to the underlying data
+#' The pointer is passed via a cast to double and can be used with custom C code, for example by using package inline.
 #'
 #' @param MVLHANDLE either a handle provided by mvl_open() or and MVL object such as produced by indexing operators
 #' @param offset offset to the object which properties are to be retrieved
@@ -212,7 +349,7 @@ mvl_object_stats<-function(MVLHANDLE, offset=NULL) {
 	return(L)
 	}
 	
-mvl_read_object<-function(MVLHANDLE, offset, idx=NULL, recurse=FALSE, raw=FALSE) {
+mvl_read_object<-function(MVLHANDLE, offset, idx=NULL, recurse=FALSE, raw=FALSE, ref=FALSE) {
 	if(!inherits(MVLHANDLE, "MVL") && !inherits(MVLHANDLE, "MVL_OBJECT")) stop("not an MVL object")
 	if(!inherits(offset, "MVL_OFFSET"))stop("not an MVL offset")
 	if(is.na(offset))return(NA)
@@ -244,7 +381,7 @@ mvl_read_object<-function(MVLHANDLE, offset, idx=NULL, recurse=FALSE, raw=FALSE)
 		if(recurse) {
 			vec<-lapply(vec, function(x){class(x)<-"MVL_OFFSET" ; return(mvl_read_object(MVLHANDLE, x, recurse=TRUE, raw=raw))})
 		 } else {
-			Fsmall<-lengths<MVL_SMALL_LENGTH
+			Fsmall<-lengths<MVL_SMALL_LENGTH & !ref
 			vec[Fsmall]<-lapply(vec[Fsmall], function(x){class(x)<-"MVL_OFFSET" ; return(mvl_read_object(MVLHANDLE, x, recurse=FALSE, raw=raw))})
 			vec[!Fsmall]<-lapply(vec[!Fsmall], function(x) {
 				class(x)<-"MVL_OFFSET"
@@ -318,10 +455,11 @@ mvl_add_directory_entries<-function(MVLHANDLE, tag, offsets) {
 #' @param MVLHANDLE - handle to opened MVL file as generated by \code{mvl_open}
 #' @param y - name of object to retrieve
 #' @param raw - request to return data in raw format when it does not map exactly to R data types. 
+#' @param ref - always return an MVL_OBJECT
 #' @return Stored object
 #' @export [.MVL
 #' @export
-`[.MVL`<-function(MVLHANDLE, y, raw=FALSE) {
+`[.MVL`<-function(MVLHANDLE, y, raw=FALSE, ref=FALSE) {
 	if(!inherits(MVLHANDLE, "MVL")) stop("not an MVL object")
 	
 	if(is.factor(y))y<-as.character(y)
@@ -337,7 +475,7 @@ mvl_add_directory_entries<-function(MVLHANDLE, tag, offsets) {
 		obj[["metadata"]]<-mvl_read_metadata(MVLHANDLE, obj[["metadata_offset"]])
 		class(obj)<-"MVL_OBJECT"
 		
-		if(obj[["length"]]<MVL_SMALL_LENGTH)obj<-mvl_read_object(MVLHANDLE, obj[["offset"]], recurse=FALSE, raw=raw)
+		if(!ref && obj[["length"]]<MVL_SMALL_LENGTH)obj<-mvl_read_object(MVLHANDLE, obj[["offset"]], recurse=FALSE, raw=raw)
 		
 		return(obj)
 		}
@@ -387,6 +525,7 @@ print.MVL<-function(x, ...) {
 MVL_TYPE_NAME<-list("UINT8", "INT32", "INT64", "FLOAT", "DOUBLE")
 MVL_TYPE_NAME[[100]]<-"OFFSET64"
 MVL_TYPE_NAME[[101]]<-"CSTRING"
+MVL_TYPE_NAME[[102]]<-"STRVEC"
 	
 mvl_type_name<-function(x) {
 	y<-lapply(MVL_TYPE_NAME[x], function(xx){if(is.null(xx))return(NA); return(xx)})
@@ -406,8 +545,11 @@ mvl_type_name<-function(x) {
 print.MVL_OBJECT<-function(x, ..., small_length=10) {
 	obj<-x
 	object_class<-obj[["metadata"]][["class"]]
-	if(is.null(object_class) || (object_class %in% c("numeric", "integer"))) {
-		cat("MVL_OBJECT(", mvl_type_name(obj[["type"]]), " length ", obj[["length"]], ")\n", sep="")
+	if(is.null(object_class) || (object_class %in% c("numeric", "integer", "character"))) {
+		tname<-mvl_type_name(obj[["type"]])
+		len<-obj[["length"]]
+		if(tname=="STRVEC")len<-len-1
+		cat("MVL_OBJECT(", tname, " length ", len, ")\n", sep="")
 		} else
 	if(object_class %in% c("data.frame", "array", "matrix")) {
 		od<-obj[["metadata"]][["dim"]]
@@ -448,6 +590,19 @@ length.MVL_OBJECT<-function(x) {
 	return(x[["length"]])
 	}
 	
+	
+#' Retrieve MVL object names
+#' 
+#' @param x MVL_OBJECT as retrieved by subscription operators
+#' @return character vector of names
+#'
+#' @export
+names.MVL_OBJECT<-function(x) {
+	m<-unclass(x)[["metadata"]]
+	if(is.null(m))stop("Malformed MVL_OBJECT")
+	return(m[["names"]])
+	}
+	
 # We are exporting plain function as well, so one can list its source code from command line
 #' MVL object subscription operator
 #'
@@ -461,12 +616,13 @@ length.MVL_OBJECT<-function(x) {
 #' @param drop - whether to drop dimensionality, such as done with R array or data frames
 #' @param raw - request to return data in raw format when it does not map exactly to R data types. 
 #' @param recurse - force recursive conversion to pure R objects. 
+#' @param ref - always return an MVL_OBJECT
 #' @return Stored object
 #' @export [.MVL_OBJECT
 #' @export
-`[.MVL_OBJECT`<-function(obj, i, ..., drop=NULL, raw=FALSE, recurse=FALSE) {
+`[.MVL_OBJECT`<-function(obj, i, ..., drop=TRUE, raw=FALSE, recurse=FALSE, ref=FALSE) {
 	if(missing(i) && ...length()==0) {
-		return(mvl_read_object(obj, unclass(obj)[["offset"]], recurse=recurse, raw=raw))
+		return(mvl_read_object(obj, unclass(obj)[["offset"]], recurse=recurse, raw=raw, ref=ref))
 		}
 	#cat("obj class ", obj[["metadata"]][["class"]], "\n")
 	object_class<-obj[["metadata"]][["class"]]
@@ -474,12 +630,6 @@ length.MVL_OBJECT<-function(x) {
 	if(object_class=="data.frame") {
 		if(...length()>1)stop("Object", obj, "has only two dimensions")
 		n<-obj[["metadata"]][["names"]]
-		if(missing(i)) {
-			i<-1:(obj[["metadata"]][["dim"]][1])
-			}
-		if(is.logical(i)) {
-			i<-which(i)
-			}
 		if(...length()<1 || missing(..1)) {
 			j<-1:length(n)
 			} else {
@@ -495,6 +645,25 @@ length.MVL_OBJECT<-function(x) {
 				j<-j0
 				}
 			n<-n[j]
+			}
+		if(missing(i)) {
+			if(length(j)==1 && drop) {
+				ofs<-.Call("read_vectors_idx_real", obj[["handle"]], obj[["offset"]], as.numeric(j-1))[[1]]
+				metadata_offset<-.Call("read_metadata", obj[["handle"]], ofs)
+				metadata<-mvl_read_metadata(obj, metadata_offset)
+
+				L<-list(handle=obj[["handle"]], offset=ofs, length=.Call("read_lengths", obj[["handle"]], ofs), type=.Call("read_types", obj[["handle"]], ofs),metadata_offset=metadata_offset)
+				L[["metadata"]]<-metadata
+				class(L)<-"MVL_OBJECT"
+				
+				if(!ref && (length(L)<MVL_SMALL_LENGTH || recurse) )L<-mvl_read_object(L, unclass(L)[["offset"]], recurse=recurse, ref=ref, raw=raw)
+				
+				return(L)
+				}
+			i<-1:(obj[["metadata"]][["dim"]][1])
+			}
+		if(is.logical(i)) {
+			i<-which(i)
 			}
 		if(raw)
 			ofs<-.Call("read_vectors_idx_raw_real", obj[["handle"]], obj[["offset"]], as.numeric(j-1))[[1]]

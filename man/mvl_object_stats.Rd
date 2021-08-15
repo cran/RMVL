@@ -21,6 +21,6 @@ Provide detailed information on stored MVL object without retrieving it
 This function is given either an MVL handle and an offset in MVL file to examine, or just a single parameter of class MVL_OBJECT that contains
  both handle and offset
 
-The function returns list of object parameters including total number of element, element type (as used by libMVL) and a pointer to the underlying data
-The pointer is passed cast to double and can be used with custom C code, for example by using package inline.
+The function returns list of object parameters including total number of elements, element type (as used by libMVL) and a pointer to the underlying data
+The pointer is passed via a cast to double and can be used with custom C code, for example by using package inline.
 }

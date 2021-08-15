@@ -2,7 +2,7 @@
 % Please edit documentation in R/RMVL.R
 \name{mvl_write_object}
 \alias{mvl_write_object}
-\title{Write R objects into MVL file}
+\title{Write R object into MVL file}
 \usage{
 mvl_write_object(MVLHANDLE, x, name = NULL, drop.rownames = FALSE)
 }
@@ -16,8 +16,8 @@ mvl_write_object(MVLHANDLE, x, name = NULL, drop.rownames = FALSE)
 \item{drop.rownames}{set to TRUE to prevent rownames from being written}
 }
 \value{
-and object of class MVL_OFFSET that describes an offset into this MVL file. MVL offsets are vectors and can be concatenated. They can be written to MVL file directly, or as part of another object such as list.
+an object of class MVL_OFFSET that describes an offset into this MVL file. MVL offsets are vectors and can be concatenated. They can be written to MVL file directly, or as part of another object such as list.
 }
 \description{
-Write R objects into MVL file
+Write R object into MVL file
 }

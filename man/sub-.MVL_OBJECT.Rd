@@ -4,7 +4,7 @@
 \alias{[.MVL_OBJECT}
 \title{MVL object subscription operator}
 \usage{
-\method{[}{MVL_OBJECT}(obj, i, ..., drop = NULL, raw = FALSE, recurse = FALSE)
+\method{[}{MVL_OBJECT}(obj, i, ..., drop = TRUE, raw = FALSE, recurse = FALSE, ref = FALSE)
 }
 \arguments{
 \item{obj}{- MVL object retrieved by subscription of MVL library or other objects}
@@ -16,6 +16,8 @@
 \item{raw}{- request to return data in raw format when it does not map exactly to R data types.}
 
 \item{recurse}{- force recursive conversion to pure R objects.}
+
+\item{ref}{- always return an MVL_OBJECT}
 
 \item{\ldots}{optional additional indices for multidimensional arrays and data frames}
 }
