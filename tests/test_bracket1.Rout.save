@@ -1,0 +1,75 @@
+
+R version 3.6.3 (2020-02-29) -- "Holding the Windsock"
+Copyright (C) 2020 The R Foundation for Statistical Computing
+Platform: x86_64-pc-linux-gnu (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> require("RMVL")
+Loading required package: RMVL
+>  
+> M3<-mvl_open("test2.mvl", append=TRUE, create=TRUE)
+> L<-list()
+> df<-data.frame(x=1:1e5, y=rnorm(1e5), s=rep(c("a", "b"), 5e4))
+> L[["x"]]<-mvl_write_object(M3, df)
+> L[["description"]]<-"Example of large data frame"
+> mvl_write_object(M3, L, "test_object")
+> mvl_close(M3)
+> 
+> M3<-mvl_open("test2.mvl")
+> print(names(M3))
+[1] "test_object"
+> L2<-M3["test_object"]
+> 
+> N<-dim(df)[1]
+> 
+> compare_df<-function(x, y) {
++ 	if(length(dim(x))!=length(dim(y)))return(FALSE)
++ 	if(any(dim(x)!=dim(y)))return(FALSE)
++ 	if(any(names(x)!=names(y)))return(FALSE)
++ 	if(dim(x)[2]>0) {
++ 		for(i in 1:(dim(x)[2])) {
++ 			if(any(x[,i]!=y[,i]))return(FALSE)
++ 			}
++ 		}
++ 	return(TRUE)
++ 	}
+> 
+> if(!compare_df(df[1:20,], L2[["x"]][1:20,]))cat("test1 failed\n")
+> 
+> if(!compare_df(df[(1:N) %% 5==0,], L2[["x"]][(1:N) %% 5==0,]))cat("test2 failed\n")
+> 
+> if(!compare_df(df[(1:N) %% 5==0,], L2[["x"]][(1:N)[(1:N) %% 5==0],]))cat("test3 failed\n")
+> 
+> if(!compare_df(df[(1:N) %% 5==0, c("y", "s")], L2[["x"]][(1:N)[(1:N) %% 5==0], c("y", "s")]))cat("test4 failed\n")
+> 
+> if(!identical(df[(1:N) %% 5==0, c("s")], L2[["x"]][(1:N)[(1:N) %% 5==0], c("s")]))cat("test5 failed\n")
+> 
+> if(!compare_df(df[(1:N) %% 5==0, 2:3], L2[["x"]][(1:N)[(1:N) %% 5==0], 2:3]))cat("test6 failed\n")
+> 
+> print(mvl_object_stats(L2[["x"]])[c("length", "type")])
+$length
+[1] 3
+
+$type
+[1] 100
+
+> 
+> mvl_close(M3)
+> 
+> unlink("test2.mvl")
+> 
+> 
+> proc.time()
+   user  system elapsed 
+  0.389   0.025   0.406 

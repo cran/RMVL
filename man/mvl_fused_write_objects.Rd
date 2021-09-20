@@ -16,9 +16,19 @@ mvl_fused_write_objects(MVLHANDLE, L, name = NULL, drop.rownames = TRUE)
 \item{drop.rownames}{set to TRUE to prevent rownames from being written}
 }
 \value{
-and object of class MVL_OFFSET that describes an offset into this MVL file. MVL offsets are vectors and can be concatenated. They can be written to MVL file directly, or as part of another object such as list.
+any object of class MVL_OFFSET that describes an offset into this MVL file. MVL offsets are vectors and can be concatenated. They can be written to MVL file directly, or as part of another object such as list.
 }
 \description{
 This function can concatenate a mixture of R and MVL objects. For vectors it is the equivalent of \code{c()}. For array and matrices it works as \code{cbind()}
 For data frames it works as \code{rbind}, but row names are always dropped.
+}
+\examples{
+\dontrun{
+Mtmp<-mvl_open("tmp_a.mvl", append=TRUE, create=TRUE)
+mvl_write_object(Mtmp, runif(100), "vec1")
+mvl_write_object(Mtmp, runif(100), "vec2")
+Mtmp<-mvl_remap(Mtmp)
+mvl_fused_write_objects(Mtmp, list(Mtmp["vec1", ref=TRUE], Mtmp["vec2", ref=TRUE], runif(3)),
+                                                                                  name="vec3")
+}
 }

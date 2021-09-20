@@ -13,6 +13,6 @@ mvl_class(x)
 character string giving object class
 }
 \description{
-This function returns the class of underlying MVL_OBJECT, i.e. the class it would have if converted into regular R object.
-For non-MVL_OBJECTs it simply calls usual R class()
+This function returns the equivalent R class of underlying MVL object, i.e. the class it would have if converted into a regular R object.
+For non-MVL objects the function simply calls the usual R class(), so it can be used instead of class() for code that operates on both usual R objects and MVL objects.
 }

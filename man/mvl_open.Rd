@@ -57,3 +57,6 @@ mvl_object_stats(L[["x"]])
 mvl_close(M4)
 }
 }
+\seealso{
+\code{\link{mvl_close}}, \code{\link{mvl_remap}}
+}

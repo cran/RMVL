@@ -7,7 +7,7 @@
 mvl_object_stats(MVLHANDLE, offset = NULL)
 }
 \arguments{
-\item{MVLHANDLE}{either a handle provided by mvl_open() or and MVL object such as produced by indexing operators}
+\item{MVLHANDLE}{either a handle provided by mvl_open() or an MVL object such as produced by indexing operators}
 
 \item{offset}{offset to the object which properties are to be retrieved}
 }
