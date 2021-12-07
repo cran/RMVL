@@ -17,6 +17,6 @@ mvl_inherits(x, clstr, which = FALSE)
 character string giving object class
 }
 \description{
-This functions works just like the usual R \code{inherits()}, except that it takes MVL_OBJECT class into account.
+This function works just like the usual R \code{inherits()}, except that for MVL_OBJECTS it used the class value stored in the MVL file.
 For non-MVL objects the function simply calls the usual R \code{inherit()}, so it can be used instead of \code{inherit()} for code that operates on both usual R objects and MVL objects.
 }

@@ -7,7 +7,7 @@
 mvl_get_neighbors(spatial_index, data_list)
 }
 \arguments{
-\item{spatial_index}{MVL_OBJECT computed by \code{mvl_write_spatial_groups}}
+\item{spatial_index}{MVL_OBJECT computed by \code{mvl_write_spatial_index1}}
 
 \item{data_list}{a list of vectors of equal length. They can be MVL_OBJECTs or R vectors.}
 }
@@ -15,20 +15,20 @@ mvl_get_neighbors(spatial_index, data_list)
 a list of vectors of indices
 }
 \description{
-This function is passed the index computed by \code{mvl_write_spatial_groups} and a list of vectors, which rows are interpreted as points.
-For each row, the function returns a list of indices describing rows that are close to it.
+This function is passed the index computed by \code{mvl_write_spatial_index1} and a list of vectors, which rows are interpreted as points.
+For each row, the function returns a vector of indices describing rows that are close to it.
 }
 \examples{
 \dontrun{
 Mtmp<-mvl_open("tmp_a.mvl", append=TRUE, create=TRUE)
 mvl_write_object(Mtmp, data.frame(x=runif(100), y=1:100), "df1")
 Mtmp<-mvl_remap(Mtmp)
-mvl_write_spatial_groups(Mtmp, list(Mtmp$df1[,"x",ref=TRUE], Mtmp$df1[,"y", ref=TRUE]),
+mvl_write_spatial_index1(Mtmp, list(Mtmp$df1[,"x",ref=TRUE], Mtmp$df1[,"y", ref=TRUE]),
                                                               c(2, 3), "df1_sp_groups")
 Mtmp<-mvl_remap(Mtmp)
 print(mvl_get_neighbors(Mtmp["df1_sp_groups", ref=TRUE], list(c(0.5, 0.6), c(2, 3))))
 }
 }
 \seealso{
-\code{\link{mvl_write_spatial_groups}}
+\code{\link{mvl_write_spatial_index1}}, \code{\link{mvl_index_lapply}}
 }

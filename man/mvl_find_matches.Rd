@@ -20,8 +20,8 @@ A list of matches and match stretches
 }
 \description{
 This function is passed two lists of MVL vectors which are interpreted in data.frame fashion. 
-The indices of pairwise matches are returned in order of the first argument ("index1" and "index2"). 
-In addition we return indices describing stretches with "index1" value constant ( stretch_index[i] to stretch_index[i+1]-1)
+The indices of pairwise matches are returned in order of the arguments ("index1" and "index2"). 
+In addition we return indices describing stretches with "index1" value constant ( stretch_index1[i] to stretch_index1[i+1]-1)
 }
 \examples{
 \dontrun{

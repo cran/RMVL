@@ -4,12 +4,14 @@
 \alias{mvl_object_stats}
 \title{Return MVL object properties}
 \usage{
-mvl_object_stats(MVLHANDLE, offset = NULL)
+mvl_object_stats(MVLHANDLE, offset = NULL, scan = FALSE)
 }
 \arguments{
 \item{MVLHANDLE}{either a handle provided by mvl_open() or an MVL object such as produced by indexing operators}
 
 \item{offset}{offset to the object which properties are to be retrieved}
+
+\item{scan}{scan vector element to obtain additional statistics}
 }
 \value{
 list with object properties
@@ -21,6 +23,6 @@ Provide detailed information on stored MVL object without retrieving it
 This function is given either an MVL handle and an offset in MVL file to examine, or just a single parameter of class MVL_OBJECT that contains
  both handle and offset
 
-The function returns list of object parameters including total number of elements, element type (as used by libMVL) and a pointer to the underlying data
-The pointer is passed via a cast to double and can be used with custom C code, for example by using package inline.
+This function returns a list of object parameters describing total number of elements, element type (as used by libMVL) and a pointer to the underlying data.
+The pointer is passed via a cast to double to preserve its 64-bit value and can be used with custom C code, for example by using package inline.
 }

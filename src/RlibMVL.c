@@ -9,6 +9,13 @@
 #endif
 #include <errno.h>
 #include "libMVL.h"
+
+/* This needs to be before including R headers because they redefine "error" as a macro */
+static inline int mvl_get_error(LIBMVL_CONTEXT *ctx)
+{
+return ctx->error;
+}
+
 #include <R.h>
 #include <Rinternals.h>
 //#include <Rext/Print.h>
@@ -43,6 +50,7 @@ if(length(mode0)!=1) {
 	}
 	
 mode=INTEGER(mode0)[0];
+fn=CHAR(asChar(filename));
 
 idx=-1;
 for(i=0;i<libraries_free;i++) {
@@ -67,8 +75,6 @@ if(idx<0) {
 	idx=libraries_free;
 	libraries_free++;
 	}
-
-fn=CHAR(asChar(filename));
 
 //Rprintf("Accessing MVL library from %s\n", fn);
 
@@ -215,6 +221,8 @@ if(mode==0) {
 	/* Read-only mapping; no need to use up a file descriptor */
 	if(p->modified) {
 		mvl_close(p->ctx);
+		if(mvl_get_error(p->ctx)!=0)
+			error("Error %d encountered when closing MVL file: %s", mvl_get_error(p->ctx), mvl_strerror(p->ctx));
 		}			
 	}
 	
@@ -311,6 +319,8 @@ if(p->data!=NULL) {
 	
 if(p->modified) {
 	mvl_close(p->ctx);
+	if(mvl_get_error(p->ctx)!=0)
+		error("Error %d encountered when closing MVL file: %s", mvl_get_error(p->ctx), mvl_strerror(p->ctx));
 	}
 	
 mvl_free_context(p->ctx);
@@ -360,11 +370,17 @@ if((*idx)>=0 && sofs!=R_NilValue && length(sofs)==1) {
 
 LIBMVL_VECTOR * get_mvl_vector(int idx, LIBMVL_OFFSET64 offset)
 {
+int err;
 if(idx<0 || idx>=libraries_free || offset==0)return(NULL);
 
 if(libraries[idx].ctx==NULL)return(NULL);
 
 if(libraries[idx].data==NULL)return(NULL);
+
+if((err=mvl_validate_vector(offset, libraries[idx].data, libraries[idx].length))<0) {
+	error("Invalid vector: error %d", err);
+	return(NULL);
+	}
 
 return((LIBMVL_VECTOR *)(&libraries[idx].data[offset]));
 }
@@ -411,20 +427,20 @@ switch(TYPEOF(indices)) {
 		
 		switch(mvl_vector_type(vec)) {
 			case LIBMVL_VECTOR_OFFSET64:
-				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data(vec).i64[m]-1;
-//				memcpy(v_idx, mvl_vector_data(vec).offset, N*sizeof(*v_idx));
+				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data_int64(vec)[m]-1;
+//				memcpy(v_idx, mvl_vector_data_offset(vec), N*sizeof(*v_idx));
 				break;
 			case LIBMVL_VECTOR_INT32:
-				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data(vec).i[m]-1;
+				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data_int32(vec)[m]-1;
 				break;
 			case LIBMVL_VECTOR_INT64:
-				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data(vec).i64[m]-1;
+				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data_int64(vec)[m]-1;
 				break;
 			case LIBMVL_VECTOR_DOUBLE:
-				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data(vec).d[m]-1;
+				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data_double(vec)[m]-1;
 				break;
 			case LIBMVL_VECTOR_FLOAT:
-				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data(vec).f[m]-1;
+				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data_float(vec)[m]-1;
 				break;
 			default:
 				error("Cannot interpret MVL object as indices");
@@ -535,6 +551,7 @@ SEXP ans, class, names;
 long i;
 LIBMVL_OFFSET64 offset;
 double *doffset=(double *)&offset;
+LIBMVL_NAMED_LIST *dir;
 
 double *dp;
 
@@ -551,12 +568,13 @@ if(libraries[idx].ctx==NULL){
 	error("no such library");
 	return(R_NilValue);
 	}
-ans=PROTECT(allocVector(REALSXP, libraries[idx].ctx->dir_free));
-names=PROTECT(allocVector(STRSXP, libraries[idx].ctx->dir_free));
+dir=libraries[idx].ctx->directory;
+ans=PROTECT(allocVector(REALSXP, dir->free));
+names=PROTECT(allocVector(STRSXP, dir->free));
 dp=REAL(ans);
-for(i=0;i<libraries[idx].ctx->dir_free;i++) {
-	SET_STRING_ELT(names, i, mkChar(libraries[idx].ctx->directory[i].tag));
-	offset=libraries[idx].ctx->directory[i].offset;
+for(i=0;i<dir->free;i++) {
+	SET_STRING_ELT(names, i, mkChar(dir->tag[i]));
+	offset=dir->offset[i];
 	dp[i]=*doffset;
 	}
 setAttrib(ans, R_NamesSymbol, names);
@@ -597,8 +615,8 @@ d_offsets=REAL(offsets);
 for(i=0;i<xlength(offsets);i++) {
 	doffset=d_offsets[i];
 	offset=*offset0;
-	if(offset==0 || offset>libraries[idx].length-sizeof(LIBMVL_VECTOR_HEADER)) {
-		REAL(ans)[i]=NA_REAL;
+	if(mvl_validate_vector(offset, libraries[idx].data, libraries[idx].length)) {
+		d_ans[i]=NA_REAL;
 		continue;
 		}
 	vec=(LIBMVL_VECTOR *)(&libraries[idx].data[offset]);
@@ -615,6 +633,53 @@ for(i=0;i<xlength(offsets);i++) {
 UNPROTECT(1);
 return(ans);
 }
+
+SEXP compute_vector_stats(SEXP idx0, SEXP offsets)
+{
+int idx;
+SEXP ans;
+long i, j;
+double doffset;
+LIBMVL_OFFSET64 *offset0=(LIBMVL_OFFSET64 *)&doffset;
+LIBMVL_OFFSET64 offset;
+LIBMVL_VECTOR *vec;
+double *d_ans, *d_offsets;
+LIBMVL_VEC_STATS stats;
+int nfields=sizeof(stats)/sizeof(double);
+
+if(length(idx0)!=1) {
+	error("find_directory_entry first argument must be a single integer");
+	return(R_NilValue);
+	}
+idx=INTEGER(idx0)[0];
+if(idx<0 || idx>=libraries_free) {
+	error("no such library");
+	return(R_NilValue);
+	}
+if(libraries[idx].ctx==NULL) {
+	error("no such library");
+	return(R_NilValue);
+	}
+ans=PROTECT(allocVector(REALSXP, xlength(offsets)*nfields));
+d_ans=REAL(ans);
+d_offsets=REAL(offsets);
+for(i=0;i<xlength(offsets);i++) {
+	doffset=d_offsets[i];
+	offset=*offset0;
+	if(mvl_validate_vector(offset, libraries[idx].data, libraries[idx].length)) {		
+		for(j=0;j<nfields;j++)
+			d_ans[i*nfields+j]=NA_REAL;
+		continue;
+		}
+	vec=(LIBMVL_VECTOR *)(&libraries[idx].data[offset]);
+	mvl_compute_vec_stats(vec, &stats);
+	memcpy(&(d_ans[i*nfields]), &stats, sizeof(stats));
+	}
+
+UNPROTECT(1);
+return(ans);
+}
+
 
 SEXP read_types(SEXP idx0, SEXP offsets)
 {
@@ -648,8 +713,8 @@ p_offsets=REAL(offsets);
 for(i=0;i<xlength(offsets);i++) {
 	doffset=p_offsets[i];
 	offset=*offset0;
-	if(offset==0 || offset>libraries[idx].length-sizeof(LIBMVL_VECTOR_HEADER)) {
-		INTEGER(ans)[i]=NA_INTEGER;
+	if(mvl_validate_vector(offset, libraries[idx].data, libraries[idx].length)) {		
+		p_ans[i]=NA_INTEGER;
 		continue;
 		}
 	vec=(LIBMVL_VECTOR *)(&libraries[idx].data[offset]);
@@ -723,23 +788,23 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(RAWSXP, mvl_vector_length(vec)*field_size));
 			pc=RAW(v);
 			for(j=0;j<mvl_vector_length(vec)*field_size;j++)
-				pc[j]=mvl_vector_data(vec).b[j];
+				pc[j]=mvl_vector_data_uint8(vec)[j];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
 		case LIBMVL_VECTOR_CSTRING:
 			v=PROTECT(allocVector(STRSXP, 1));
 			/* TODO: check that vector length is within R limits */
-			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data(vec).b, mvl_vector_length(vec)));
+			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data_uint8(vec), mvl_vector_length(vec)));
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_INT32:
 			v=PROTECT(allocVector(INTSXP, mvl_vector_length(vec)));
 			pi=INTEGER(v);
 			for(j=0;j<mvl_vector_length(vec);j++)
-				pi[j]=mvl_vector_data(vec).i[j];
+				pi[j]=mvl_vector_data_int32(vec)[j];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -747,7 +812,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, mvl_vector_length(vec)));
 			pd=REAL(v);
 			for(j=0;j<mvl_vector_length(vec);j++)
-				pd[j]=mvl_vector_data(vec).d[j];
+				pd[j]=mvl_vector_data_double(vec)[j];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -755,7 +820,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, mvl_vector_length(vec)));
 			pd=REAL(v);
 			for(j=0;j<mvl_vector_length(vec);j++) {
-				offset=mvl_vector_data(vec).offset[j];
+				offset=mvl_vector_data_offset(vec)[j];
 				pd[j]=*doffset2;
 				}
 			class=PROTECT(allocVector(STRSXP, 1));
@@ -802,7 +867,7 @@ int *pi, *pidx;
 unsigned char *pc;
 
 if(length(idx0)!=1) {
-	error("find_directory_entry first argument must be a single integer");
+	error("read_vectors_idx_raw first argument must be a single integer");
 	return(R_NilValue);
 	}
 idx=INTEGER(idx0)[0];
@@ -846,33 +911,33 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(RAWSXP, xlength(indicies)));
 			pc=RAW(v);
 			for(j=0;j<xlength(indicies);j++)
-				pc[j]=mvl_vector_data(vec).b[pidx[j]];
+				pc[j]=mvl_vector_data_uint8(vec)[pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_CSTRING:
 			error("String subset not supported");
 			return(R_NilValue);
 			v=PROTECT(allocVector(STRSXP, 1));
 			/* TODO: check that vector length is within R limits */
-			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data(vec).b, mvl_vector_length(vec)));
+			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data_uint8(vec), mvl_vector_length(vec)));
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_INT32:
 			v=PROTECT(allocVector(INTSXP, xlength(indicies)));
 			pi=INTEGER(v);
 			for(j=0;j<xlength(indicies);j++)
-				pi[j]=mvl_vector_data(vec).i[pidx[j]];
+				pi[j]=mvl_vector_data_int32(vec)[pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
 		case LIBMVL_VECTOR_INT64:
 			v=PROTECT(allocVector(RAWSXP, xlength(indicies)*field_size));
 			for(j=0;j<xlength(indicies)*field_size;j+=field_size)
-				memcpy(&(RAW(v)[j]), &(mvl_vector_data(vec).i64[pidx[j]]), field_size);
+				memcpy(&(RAW(v)[j]), &(mvl_vector_data_int64(vec)[pidx[j]]), field_size);
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);			
 			break;
@@ -880,7 +945,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(RAWSXP, xlength(indicies)*field_size));
 			pc=RAW(v);
 			for(j=0;j<xlength(indicies)*field_size;j+=field_size)
-				memcpy(&(pc[j]), &(mvl_vector_data(vec).i64[pidx[j]]), field_size);
+				memcpy(&(pc[j]), &(mvl_vector_data_int64(vec)[pidx[j]]), field_size);
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);			
 			break;
@@ -888,7 +953,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, xlength(indicies)));
 			pd=REAL(v);
 			for(j=0;j<xlength(indicies);j++)
-				pd[j]=mvl_vector_data(vec).d[pidx[j]];
+				pd[j]=mvl_vector_data_double(vec)[pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -896,7 +961,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, xlength(indicies)));
 			pd=REAL(v);
 			for(j=0;j<xlength(indicies);j++) {
-				offset=mvl_vector_data(vec).offset[pidx[j]];
+				offset=mvl_vector_data_offset(vec)[pidx[j]];
 				pd[j]=*doffset2;
 				}
 			class=PROTECT(allocVector(STRSXP, 1));
@@ -943,7 +1008,7 @@ int *pi;
 unsigned char *pc;
 
 if(length(idx0)!=1) {
-	error("find_directory_entry first argument must be a single integer");
+	error("read_vectors_idx_raw_real first argument must be a single integer");
 	return(R_NilValue);
 	}
 idx=INTEGER(idx0)[0];
@@ -987,26 +1052,26 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(RAWSXP, xlength(indicies)));
 			pc=RAW(v);
 			for(j=0;j<xlength(indicies);j++)
-				pc[j]=mvl_vector_data(vec).b[(LIBMVL_OFFSET64)pidx[j]];
+				pc[j]=mvl_vector_data_uint8(vec)[(LIBMVL_OFFSET64)pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_CSTRING:
 			error("String subset not supported");
 			return(R_NilValue);
 			v=PROTECT(allocVector(STRSXP, 1));
 			/* TODO: check that vector length is within R limits */
-			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data(vec).b, mvl_vector_length(vec)));
+			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data_uint8(vec), mvl_vector_length(vec)));
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_INT32:
 			v=PROTECT(allocVector(INTSXP, xlength(indicies)));
 			pi=INTEGER(v);
 			for(j=0;j<xlength(indicies);j++)
-				pi[j]=mvl_vector_data(vec).i[(LIBMVL_OFFSET64)pidx[j]];
+				pi[j]=mvl_vector_data_int32(vec)[(LIBMVL_OFFSET64)pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1014,7 +1079,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(RAWSXP, xlength(indicies)*field_size));
 			pc=RAW(v);
 			for(j=0;j<xlength(indicies)*field_size;j+=field_size)
-				memcpy(&(pc[j]), &(mvl_vector_data(vec).i64[(LIBMVL_OFFSET64)pidx[j]]), field_size);
+				memcpy(&(pc[j]), &(mvl_vector_data_int64(vec)[(LIBMVL_OFFSET64)pidx[j]]), field_size);
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);			
 			break;
@@ -1022,7 +1087,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(RAWSXP, xlength(indicies)*field_size));
 			pc=RAW(v);
 			for(j=0;j<xlength(indicies)*field_size;j+=field_size)
-				memcpy(&(pc[j]), &(mvl_vector_data(vec).f[(LIBMVL_OFFSET64)pidx[j]]), field_size);
+				memcpy(&(pc[j]), &(mvl_vector_data_float(vec)[(LIBMVL_OFFSET64)pidx[j]]), field_size);
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);			
 			break;
@@ -1030,7 +1095,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, xlength(indicies)));
 			pd=REAL(v);
 			for(j=0;j<xlength(indicies);j++)
-				pd[j]=mvl_vector_data(vec).d[(LIBMVL_OFFSET64)pidx[j]];
+				pd[j]=mvl_vector_data_double(vec)[(LIBMVL_OFFSET64)pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1038,7 +1103,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, xlength(indicies)));
 			pd=REAL(v);
 			for(j=0;j<xlength(indicies);j++) {
-				offset=mvl_vector_data(vec).offset[(LIBMVL_OFFSET64)pidx[j]];
+				offset=mvl_vector_data_offset(vec)[(LIBMVL_OFFSET64)pidx[j]];
 				pd[j]=*doffset2;
 				}
 			class=PROTECT(allocVector(STRSXP, 1));
@@ -1084,7 +1149,7 @@ int *pi;
 unsigned char *pc;
 
 if(length(idx0)!=1) {
-	error("find_directory_entry first argument must be a single integer");
+	error("read_vectors_idx_raw2 first argument must be a single integer");
 	return(R_NilValue);
 	}
 idx=INTEGER(idx0)[0];
@@ -1135,10 +1200,10 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(RAWSXP, N));
 			pc=RAW(v);
 			for(j=0;j<N;j++)
-				pc[j]=mvl_vector_data(vec).b[v_idx[j]];
+				pc[j]=mvl_vector_data_uint8(vec)[v_idx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_CSTRING:
 			error("String subset not supported");
@@ -1146,16 +1211,16 @@ for(i=0;i<xlength(offsets);i++) {
 			return(R_NilValue);
 			v=PROTECT(allocVector(STRSXP, 1));
 			/* TODO: check that vector length is within R limits */
-			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data(vec).b, mvl_vector_length(vec)));
+			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data_uint8(vec), mvl_vector_length(vec)));
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_INT32:
 			v=PROTECT(allocVector(INTSXP, N));
 			pi=INTEGER(v);
 			for(j=0;j<N;j++)
-				pi[j]=mvl_vector_data(vec).i[v_idx[j]];
+				pi[j]=mvl_vector_data_int32(vec)[v_idx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1163,7 +1228,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(RAWSXP, N*field_size));
 			pc=RAW(v);
 			for(j=0;j<N*field_size;j+=field_size)
-				memcpy(&(pc[j]), &(mvl_vector_data(vec).i64[v_idx[j]]), field_size);
+				memcpy(&(pc[j]), &(mvl_vector_data_int64(vec)[v_idx[j]]), field_size);
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);			
 			break;
@@ -1171,7 +1236,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(RAWSXP, N*field_size));
 			pc=RAW(v);
 			for(j=0;j<N*field_size;j+=field_size)
-				memcpy(&(pc[j]), &(mvl_vector_data(vec).f[v_idx[j]]), field_size);
+				memcpy(&(pc[j]), &(mvl_vector_data_float(vec)[v_idx[j]]), field_size);
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);			
 			break;
@@ -1179,7 +1244,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, N));
 			pd=REAL(v);
 			for(j=0;j<N;j++)
-				pd[j]=mvl_vector_data(vec).d[v_idx[j]];
+				pd[j]=mvl_vector_data_double(vec)[v_idx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1187,7 +1252,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, N));
 			pd=REAL(v);
 			for(j=0;j<N;j++) {
-				offset=mvl_vector_data(vec).offset[v_idx[j]];
+				offset=mvl_vector_data_offset(vec)[v_idx[j]];
 				pd[j]=*doffset2;
 				}
 			class=PROTECT(allocVector(STRSXP, 1));
@@ -1232,7 +1297,7 @@ LIBMVL_VECTOR *vec;
 double *p_offsets, *p_ans;
 
 if(length(idx0)!=1) {
-	error("find_directory_entry first argument must be a single integer");
+	error("read_vectors_idx_raw2 first argument must be a single integer");
 	return(R_NilValue);
 	}
 idx=INTEGER(idx0)[0];
@@ -1250,9 +1315,10 @@ p_offsets=REAL(offsets);
 for(i=0;i<xlength(offsets);i++) {
 	doffset=p_offsets[i];
 	offset=*offset0;
-	if(offset==0 || offset>libraries[idx].length-sizeof(LIBMVL_VECTOR_HEADER)) {
-		p_ans[i]=0;
-		continue;
+	if(mvl_validate_vector(offset, libraries[idx].data, libraries[idx].length)) {
+		UNPROTECT(1);
+		error("Invalid vector offset provided");
+		return(R_NilValue);
 		}
 	vec=(LIBMVL_VECTOR *)(&libraries[idx].data[offset]);
 	
@@ -1279,7 +1345,7 @@ int *pi;
 unsigned char *pc;
 
 if(length(idx0)!=1) {
-	error("find_directory_entry first argument must be a single integer");
+	error("read_vectors first argument must be a single integer");
 	return(R_NilValue);
 	}
 idx=INTEGER(idx0)[0];
@@ -1305,24 +1371,24 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(RAWSXP, mvl_vector_length(vec)));
 			pc=RAW(v);
 			for(j=0;j<mvl_vector_length(vec);j++)
-				pc[j]=mvl_vector_data(vec).b[j];
+				pc[j]=mvl_vector_data_uint8(vec)[j];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_CSTRING:
 			v=PROTECT(allocVector(STRSXP, 1));
 			/* TODO: check that vector length is within R limits */
-			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data(vec).b, mvl_vector_length(vec)));
+			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data_uint8(vec), mvl_vector_length(vec)));
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_INT32:
 			v=PROTECT(allocVector(INTSXP, mvl_vector_length(vec)));
 			pi=INTEGER(v);
 			for(j=0;j<mvl_vector_length(vec);j++)
-				pi[j]=mvl_vector_data(vec).i[j];
+				pi[j]=mvl_vector_data_int32(vec)[j];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1331,7 +1397,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, mvl_vector_length(vec)));
 			pd=REAL(v);
 			for(j=0;j<mvl_vector_length(vec);j++)
-				pd[j]=mvl_vector_data(vec).i64[j];
+				pd[j]=mvl_vector_data_int64(vec)[j];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1340,7 +1406,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, mvl_vector_length(vec)));
 			pd=REAL(v);
 			for(j=0;j<mvl_vector_length(vec);j++)
-				pd[j]=mvl_vector_data(vec).f[j];
+				pd[j]=mvl_vector_data_float(vec)[j];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1348,7 +1414,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, mvl_vector_length(vec)));
 			pd=REAL(v);
 			for(j=0;j<mvl_vector_length(vec);j++)
-				pd[j]=mvl_vector_data(vec).d[j];
+				pd[j]=mvl_vector_data_double(vec)[j];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1356,7 +1422,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, mvl_vector_length(vec)));
 			pd=REAL(v);
 			for(j=0;j<mvl_vector_length(vec);j++) {
-				offset=mvl_vector_data(vec).offset[j];
+				offset=mvl_vector_data_offset(vec)[j];
 				pd[j]=*doffset2;
 				}
 			class=PROTECT(allocVector(STRSXP, 1));
@@ -1401,7 +1467,7 @@ int *pi, *pidx;
 unsigned char *pc;
 
 if(length(idx0)!=1) {
-	error("find_directory_entry first argument must be a single integer");
+	error("read_vectors_idx first argument must be a single integer");
 	return(R_NilValue);
 	}
 idx=INTEGER(idx0)[0];
@@ -1439,26 +1505,26 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(RAWSXP, xlength(indicies)));
 			pc=RAW(v);
 			for(j=0;j<xlength(indicies);j++)
-				pc[j]=mvl_vector_data(vec).b[pidx[j]];
+				pc[j]=mvl_vector_data_uint8(vec)[pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_CSTRING:
 			error("String subset not supported");
 			return(R_NilValue);
 			v=PROTECT(allocVector(STRSXP, 1));
 			/* TODO: check that vector length is within R limits */
-			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data(vec).b, mvl_vector_length(vec)));
+			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data_uint8(vec), mvl_vector_length(vec)));
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_INT32:
 			v=PROTECT(allocVector(INTSXP, xlength(indicies)));
 			pi=INTEGER(v);
 			for(j=0;j<xlength(indicies);j++)
-				pi[j]=mvl_vector_data(vec).i[pidx[j]];
+				pi[j]=mvl_vector_data_int32(vec)[pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1467,7 +1533,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, xlength(indicies)));
 			pd=REAL(v);
 			for(j=0;j<xlength(indicies);j++)
-				pd[j]=mvl_vector_data(vec).i64[pidx[j]];
+				pd[j]=mvl_vector_data_int64(vec)[pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1476,7 +1542,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, xlength(indicies)));
 			pd=REAL(v);
 			for(j=0;j<xlength(indicies);j++)
-				pd[j]=mvl_vector_data(vec).f[pidx[j]];
+				pd[j]=mvl_vector_data_float(vec)[pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1484,7 +1550,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, xlength(indicies)));
 			pd=REAL(v);
 			for(j=0;j<xlength(indicies);j++)
-				pd[j]=mvl_vector_data(vec).d[pidx[j]];
+				pd[j]=mvl_vector_data_double(vec)[pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1492,7 +1558,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, xlength(indicies)));
 			pd=REAL(v);
 			for(j=0;j<xlength(indicies);j++) {
-				offset=mvl_vector_data(vec).offset[pidx[j]];
+				offset=mvl_vector_data_offset(vec)[pidx[j]];
 				pd[j]=*doffset2;
 				}
 			class=PROTECT(allocVector(STRSXP, 1));
@@ -1539,7 +1605,7 @@ int *pi;
 unsigned char *pc;
 
 if(length(idx0)!=1) {
-	error("find_directory_entry first argument must be a single integer");
+	error("read_vectors_idx_real first argument must be a single integer");
 	return(R_NilValue);
 	}
 idx=INTEGER(idx0)[0];
@@ -1577,26 +1643,26 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(RAWSXP, xlength(indicies)));
 			pc=RAW(v);
 			for(j=0;j<xlength(indicies);j++)
-				pc[j]=mvl_vector_data(vec).b[(LIBMVL_OFFSET64)pidx[j]];
+				pc[j]=mvl_vector_data_uint8(vec)[(LIBMVL_OFFSET64)pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_CSTRING:
 			error("String subset not supported");
 			return(R_NilValue);
 			v=PROTECT(allocVector(STRSXP, 1));
 			/* TODO: check that vector length is within R limits */
-			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data(vec).b, mvl_vector_length(vec)));
+			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data_uint8(vec), mvl_vector_length(vec)));
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_INT32:
 			v=PROTECT(allocVector(INTSXP, xlength(indicies)));
 			pi=INTEGER(v);
 			for(j=0;j<xlength(indicies);j++)
-				pi[j]=mvl_vector_data(vec).i[(LIBMVL_OFFSET64)pidx[j]];
+				pi[j]=mvl_vector_data_int32(vec)[(LIBMVL_OFFSET64)pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1605,7 +1671,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, xlength(indicies)));
 			pd=REAL(v);
 			for(j=0;j<xlength(indicies);j++)
-				pd[j]=mvl_vector_data(vec).i64[(LIBMVL_OFFSET64)pidx[j]];
+				pd[j]=mvl_vector_data_int64(vec)[(LIBMVL_OFFSET64)pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1614,7 +1680,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, xlength(indicies)));
 			pd=REAL(v);
 			for(j=0;j<xlength(indicies);j++)
-				pd[j]=mvl_vector_data(vec).f[(LIBMVL_OFFSET64)pidx[j]];
+				pd[j]=mvl_vector_data_float(vec)[(LIBMVL_OFFSET64)pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1622,7 +1688,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, xlength(indicies)));
 			pd=REAL(v);
 			for(j=0;j<xlength(indicies);j++)
-				pd[j]=mvl_vector_data(vec).d[(LIBMVL_OFFSET64)pidx[j]];
+				pd[j]=mvl_vector_data_double(vec)[(LIBMVL_OFFSET64)pidx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1630,7 +1696,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, xlength(indicies)));
 			pd=REAL(v);
 			for(j=0;j<xlength(indicies);j++) {
-				offset=mvl_vector_data(vec).offset[(LIBMVL_OFFSET64)pidx[j]];
+				offset=mvl_vector_data_offset(vec)[(LIBMVL_OFFSET64)pidx[j]];
 				pd[j]=*doffset2;
 				}
 			class=PROTECT(allocVector(STRSXP, 1));
@@ -1677,7 +1743,7 @@ unsigned char *pc;
 LIBMVL_OFFSET64 *poffs;
 
 if(length(idx0)!=1) {
-	error("find_directory_entry first argument must be a single integer");
+	error("read_vectors_idx2 first argument must be a single integer");
 	return(R_NilValue);
 	}
 idx=INTEGER(idx0)[0];
@@ -1720,10 +1786,10 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(RAWSXP, N));
 			pc=RAW(v);
 			for(j=0;j<N;j++)
-				pc[j]=mvl_vector_data(vec).b[v_idx[j]];
+				pc[j]=mvl_vector_data_uint8(vec)[v_idx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_CSTRING:
 			error("String subset not supported");
@@ -1731,16 +1797,16 @@ for(i=0;i<xlength(offsets);i++) {
 			return(R_NilValue);
 			v=PROTECT(allocVector(STRSXP, 1));
 			/* TODO: check that vector length is within R limits */
-			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data(vec).b, mvl_vector_length(vec)));
+			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data_uint8(vec), mvl_vector_length(vec)));
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_INT32:
 			v=PROTECT(allocVector(INTSXP, N));
 			pi=INTEGER(v);
 			for(j=0;j<N;j++)
-				pi[j]=mvl_vector_data(vec).i[v_idx[j]];
+				pi[j]=mvl_vector_data_int32(vec)[v_idx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1749,7 +1815,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, N));
 			pd=REAL(v);
 			for(j=0;j<N;j++)
-				pd[j]=mvl_vector_data(vec).i64[v_idx[j]];
+				pd[j]=mvl_vector_data_int64(vec)[v_idx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1758,7 +1824,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, N));
 			pd=REAL(v);
 			for(j=0;j<N;j++)
-				pd[j]=mvl_vector_data(vec).f[v_idx[j]];
+				pd[j]=mvl_vector_data_float(vec)[v_idx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1766,7 +1832,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, N));
 			pd=REAL(v);
 			for(j=0;j<N;j++)
-				pd[j]=mvl_vector_data(vec).d[v_idx[j]];
+				pd[j]=mvl_vector_data_double(vec)[v_idx[j]];
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -1774,7 +1840,7 @@ for(i=0;i<xlength(offsets);i++) {
 			v=PROTECT(allocVector(REALSXP, N));
 			poffs=(LIBMVL_OFFSET64 *)REAL(v);
 			for(j=0;j<N;j++) {
-				poffs[j]=mvl_vector_data(vec).offset[v_idx[j]];
+				poffs[j]=mvl_vector_data_offset(vec)[v_idx[j]];
 				}
 			class=PROTECT(allocVector(STRSXP, 1));
 			SET_STRING_ELT(class, 0, mkChar("MVL_OFFSET"));
@@ -1822,7 +1888,7 @@ LIBMVL_OFFSET64 * restrict poffs;
 double * restrict pd2;
 
 if(length(idx0)!=1) {
-	error("find_directory_entry first argument must be a single integer");
+	error("read_vectors_idx3 first argument must be a single integer");
 	return(R_NilValue);
 	}
 idx=INTEGER(idx0)[0];
@@ -1911,7 +1977,7 @@ for(i=0;i<xlength(offsets);i++) {
 			switch(mvl_vector_type(vec_idx)) { \
 				case LIBMVL_VECTOR_OFFSET64: \
 					for(LIBMVL_OFFSET64 j=0;j<N;j++) { \
-						LIBMVL_OFFSET64 j0=mvl_vector_data(vec_idx).i64[j]-1; \
+						LIBMVL_OFFSET64 j0=mvl_vector_data_int64(vec_idx)[j]-1; \
 						if(j0<N0) { \
 							line ;\
 							} \
@@ -1919,7 +1985,7 @@ for(i=0;i<xlength(offsets);i++) {
 					break; \
 				case LIBMVL_VECTOR_INT32: \
 					for(LIBMVL_OFFSET64 j=0;j<N;j++) { \
-						LIBMVL_OFFSET64 j0=mvl_vector_data(vec_idx).i[j]-1; \
+						LIBMVL_OFFSET64 j0=mvl_vector_data_int32(vec_idx)[j]-1; \
 						if(j0<N0) { \
 							line ;\
 							} \
@@ -1927,7 +1993,7 @@ for(i=0;i<xlength(offsets);i++) {
 					break; \
 				case LIBMVL_VECTOR_INT64: \
 					for(LIBMVL_OFFSET64 j=0;j<N;j++) { \
-						LIBMVL_OFFSET64 j0=mvl_vector_data(vec_idx).i64[j]-1; \
+						LIBMVL_OFFSET64 j0=mvl_vector_data_int64(vec_idx)[j]-1; \
 						if(j0<N0) { \
 							line ;\
 							} \
@@ -1935,7 +2001,7 @@ for(i=0;i<xlength(offsets);i++) {
 					break; \
 				case LIBMVL_VECTOR_DOUBLE: \
 					for(LIBMVL_OFFSET64 j=0;j<N;j++) { \
-						LIBMVL_OFFSET64 j0=mvl_vector_data(vec_idx).d[j]-1; \
+						LIBMVL_OFFSET64 j0=mvl_vector_data_double(vec_idx)[j]-1; \
 						if(j0<N0) { \
 							line ;\
 							} \
@@ -1943,7 +2009,7 @@ for(i=0;i<xlength(offsets);i++) {
 					break; \
 				case LIBMVL_VECTOR_FLOAT: \
 					for(LIBMVL_OFFSET64 j=0;j<N;j++) { \
-						LIBMVL_OFFSET64 j0=mvl_vector_data(vec_idx).f[j]-1; \
+						LIBMVL_OFFSET64 j0=mvl_vector_data_float(vec_idx)[j]-1; \
 						if(j0<N0) { \
 							line ;\
 							} \
@@ -2002,25 +2068,25 @@ for(i=0;i<xlength(offsets);i++) {
 		case LIBMVL_VECTOR_UINT8:
 			v=PROTECT(allocVector(RAWSXP, N));
 			pc=RAW(v);
-			INDEX_LOOP(pc[j]=mvl_vector_data(vec).b[j0]);
+			INDEX_LOOP(pc[j]=mvl_vector_data_uint8(vec)[j0]);
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_CSTRING:
 			error("String subset not supported");
 			return(R_NilValue);
 			v=PROTECT(allocVector(STRSXP, 1));
 			/* TODO: check that vector length is within R limits */
-			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data(vec).b, mvl_vector_length(vec)));
+			SET_STRING_ELT(v, 0, mkCharLen(mvl_vector_data_uint8(vec), mvl_vector_length(vec)));
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
-			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data(v).b, mvl_vector_length(vec)));
+			//SET_VECTOR_ELT(ans, i, mkCharLen(mvl_vector_data_uint8(v), mvl_vector_length(vec)));
 			break;
 		case LIBMVL_VECTOR_INT32:
 			v=PROTECT(allocVector(INTSXP, N));
 			pi=INTEGER(v);
-			INDEX_LOOP(pi[j]=mvl_vector_data(vec).i[j0]);
+			INDEX_LOOP(pi[j]=mvl_vector_data_int32(vec)[j0]);
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -2028,7 +2094,7 @@ for(i=0;i<xlength(offsets);i++) {
 			warning("Converted 64-bit integers to doubles");
 			v=PROTECT(allocVector(REALSXP, N));
 			pd=REAL(v);
-			INDEX_LOOP(pd[j]=mvl_vector_data(vec).i64[j0]);
+			INDEX_LOOP(pd[j]=mvl_vector_data_int64(vec)[j0]);
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
@@ -2036,14 +2102,14 @@ for(i=0;i<xlength(offsets);i++) {
 			//warning("Converted 32-bit floats to doubles");
 			v=PROTECT(allocVector(REALSXP, N));
 			pd=REAL(v);
-			INDEX_LOOP(pd[j]=mvl_vector_data(vec).f[j0]);
+			INDEX_LOOP(pd[j]=mvl_vector_data_float(vec)[j0]);
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
 			break;
 		case LIBMVL_VECTOR_DOUBLE:
 			v=PROTECT(allocVector(REALSXP, N));
 			pd=REAL(v);
-			pd2=mvl_vector_data(vec).d;
+			pd2=mvl_vector_data_double(vec);
 			INDEX_LOOP(pd[j]=pd2[j0]);
 			SET_VECTOR_ELT(ans, i, v);
 			UNPROTECT(1);
@@ -2051,7 +2117,7 @@ for(i=0;i<xlength(offsets);i++) {
 		case LIBMVL_VECTOR_OFFSET64:
 			v=PROTECT(allocVector(REALSXP, N));
 			poffs=(LIBMVL_OFFSET64 *)REAL(v);
-			INDEX_LOOP(poffs[j]=mvl_vector_data(vec).offset[j0]);
+			INDEX_LOOP(poffs[j]=mvl_vector_data_offset(vec)[j0]);
 			class=PROTECT(allocVector(STRSXP, 1));
 			SET_STRING_ELT(class, 0, mkChar("MVL_OFFSET"));
 			classgets(v, class);
@@ -2088,8 +2154,9 @@ LIBMVL_OFFSET64 *offset0=(LIBMVL_OFFSET64 *)&doffset;
 LIBMVL_OFFSET64 offset;
 double *doffset2=(double *)&offset;
 LIBMVL_VECTOR *vec;
+double *dans;
 if(length(idx0)!=1) {
-	error("find_directory_entry first argument must be a single integer");
+	error("read_metadata first argument must be a single integer");
 	return(R_NilValue);
 	}
 idx=INTEGER(idx0)[0];
@@ -2102,16 +2169,19 @@ if(libraries[idx].ctx==NULL) {
 	return(R_NilValue);
 	}
 ans=PROTECT(allocVector(REALSXP, xlength(offsets)));
+dans=REAL(ans);
 for(i=0;i<xlength(offsets);i++) {
 	doffset=REAL(offsets)[i];
 	offset=*offset0;
-	if(offset==0 || offset>libraries[idx].length-sizeof(LIBMVL_VECTOR_HEADER)) {
+	if(mvl_validate_vector(offset, libraries[idx].data, libraries[idx].length)) {
+		Rprintf("offset=%lld data=%p length=%lld\n", offset, libraries[idx].data, libraries[idx].length);
 		offset=0;
-		} else {
-		vec=(LIBMVL_VECTOR *)(&libraries[idx].data[offset]);
-		offset=mvl_vector_metadata_offset(vec);
-		}
-	REAL(ans)[i]=*doffset2;
+		dans[i]=NA_REAL;
+		continue;
+		} 
+	vec=(LIBMVL_VECTOR *)(&libraries[idx].data[offset]);
+	offset=mvl_vector_metadata_offset(vec);
+	dans[i]=*doffset2;
 	}
 
 class=PROTECT(allocVector(STRSXP, 1));
@@ -2164,6 +2234,7 @@ const char *ch, **strvec2;
 LIBMVL_OFFSET64 *strvec;
 long long *idata;
 float *fdata;
+unsigned char *bdata;
 
 double *pd;
 int *pi;
@@ -2187,6 +2258,10 @@ if(libraries[idx].f==NULL) {
 	error("library not open for writing");
 	return(R_NilValue);
 	}
+if(mvl_get_error(libraries[idx].ctx)!=0) {
+	error("library has error status %d: %s", mvl_get_error(libraries[idx].ctx), mvl_strerror(libraries[idx].ctx));
+	return(R_NilValue);
+	}
 
 if(length(type0)!=1) {
 	error("write_vector second argument must be a single integer");
@@ -2203,7 +2278,45 @@ if(length(metadata_offset)<1) {
 	}
 switch(type) {
 	case LIBMVL_VECTOR_UINT8:
-		offset=mvl_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, xlength(data), RAW(data), *moffset);
+		switch(TYPEOF(data)) {
+			case RAWSXP:
+				offset=mvl_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, xlength(data), RAW(data), *moffset);
+				break;
+			case INTSXP:
+				bdata=calloc(xlength(data), 1);
+				if(bdata==NULL) {
+					error("Out of memory");
+					return(R_NilValue);
+					}
+				int *id=INTEGER(data);
+				for(i=0;i<xlength(data);i++)bdata[i]=id[i];
+				offset=mvl_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, xlength(data), bdata, *moffset);
+				free(bdata);
+				break;
+			case REALSXP:
+				bdata=calloc(xlength(data), 1);
+				if(bdata==NULL) {
+					error("Out of memory");
+					return(R_NilValue);
+					}
+				double *fd=REAL(data);
+				for(i=0;i<xlength(data);i++)bdata[i]=fd[i];
+				offset=mvl_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, xlength(data), bdata, *moffset);
+				free(bdata);
+				break;
+			case STRSXP:
+				if(xlength(data)!=1) {
+					error("Can only convert a single string to UINT8");
+					return(R_NilValue);
+					}
+				const char *bd=CHAR(STRING_ELT(data, 0));
+				offset=mvl_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, strlen(bd), bd, *moffset);
+				break;
+			default:
+				error("Cannot convert R type %d to UINT8", TYPEOF(data));
+				return(R_NilValue);
+				break;
+			}
 		break;
 	case LIBMVL_VECTOR_INT32:
 		offset=mvl_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_INT32, xlength(data), INTEGER(data), *moffset);
@@ -2314,6 +2427,488 @@ UNPROTECT(2);
 return(ans);
 }
 
+SEXP start_write_vector(SEXP idx0, SEXP type0, SEXP expected_length0, SEXP data, SEXP metadata_offset)
+{
+long i;
+int idx, type;
+double dmoffset;
+LIBMVL_OFFSET64 *moffset=(LIBMVL_OFFSET64 *)&dmoffset;
+
+LIBMVL_OFFSET64 offset, expected_length;
+double *doffset=(double *)&offset;
+const char *ch, **strvec2;
+LIBMVL_OFFSET64 *strvec;
+long long *idata;
+float *fdata;
+unsigned char *bdata;
+
+double *pd;
+int *pi;
+
+SEXP ans, class;
+
+if(length(idx0)!=1) {
+	error("write_vector first argument must be a single integer");
+	return(R_NilValue);
+	}
+idx=INTEGER(idx0)[0];
+if(idx<0 || idx>=libraries_free) {
+	error("no such library");
+	return(R_NilValue);
+	}
+if(libraries[idx].ctx==NULL) {
+	error("no such library");
+	return(R_NilValue);
+	}
+if(libraries[idx].f==NULL) {
+	error("library not open for writing");
+	return(R_NilValue);
+	}
+if(mvl_get_error(libraries[idx].ctx)!=0) {
+	error("library has error status %d: %s", mvl_get_error(libraries[idx].ctx), mvl_strerror(libraries[idx].ctx));
+	return(R_NilValue);
+	}
+
+if(length(type0)!=1) {
+	error("write_vector second argument must be a single integer");
+	return(R_NilValue);
+	}
+type=INTEGER(type0)[0];
+
+if(length(expected_length0)!=1) {
+	error("third parameter parameter (expected_length0) must be a single real or integer");
+	return(R_NilValue);
+	}
+	
+switch(TYPEOF(expected_length0)) {
+	case REALSXP:
+		expected_length=REAL(expected_length0)[0];
+		break;
+	case INTSXP:
+		expected_length=INTEGER(expected_length0)[0];
+		break;
+	case NILSXP:
+		expected_length=xlength(data);
+		break;
+	default:
+		error("Unknown expected offset R type %d", TYPEOF(expected_length0));
+		return(R_NilValue);
+	}
+
+
+libraries[idx].modified=1;
+
+if(length(metadata_offset)<1) {
+	*moffset=0;
+	} else {
+	dmoffset=REAL(metadata_offset)[0];
+	}
+switch(type) {
+	case LIBMVL_VECTOR_UINT8:
+		switch(TYPEOF(data)) {
+			case RAWSXP:
+				offset=mvl_start_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, expected_length, xlength(data), RAW(data), *moffset);
+				break;
+			case INTSXP:
+				bdata=calloc(xlength(data), 1);
+				if(bdata==NULL) {
+					error("Out of memory");
+					return(R_NilValue);
+					}
+				int *id=INTEGER(data);
+				for(i=0;i<xlength(data);i++)bdata[i]=id[i];
+				offset=mvl_start_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, expected_length, xlength(data), bdata, *moffset);
+				free(bdata);
+				break;
+			case REALSXP:
+				bdata=calloc(xlength(data), 1);
+				if(bdata==NULL) {
+					error("Out of memory");
+					return(R_NilValue);
+					}
+				double *fd=REAL(data);
+				for(i=0;i<xlength(data);i++)bdata[i]=fd[i];
+				offset=mvl_start_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, expected_length, xlength(data), bdata, *moffset);
+				free(bdata);
+				break;
+			case STRSXP:
+				if(xlength(data)!=1) {
+					error("Can only convert a single string to UINT8");
+					return(R_NilValue);
+					}
+				const char *bd=CHAR(STRING_ELT(data, 0));
+				offset=mvl_start_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, expected_length, strlen(bd), bd, *moffset);
+				break;
+			default:
+				error("Cannot convert R type %d to UINT8", TYPEOF(data));
+				return(R_NilValue);
+				break;
+			}
+		break;
+	case LIBMVL_VECTOR_INT32:
+		offset=mvl_start_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_INT32, expected_length, xlength(data), INTEGER(data), *moffset);
+		break;
+	case LIBMVL_VECTOR_INT64:
+		switch(TYPEOF(data)) {
+			case RAWSXP:
+//				Rprintf("Writing INT64 from RAW input length %lld output length %lld\n", xlength(data), xlength(data)/8);
+				offset=mvl_start_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_INT64, expected_length, xlength(data)/8, RAW(data), *moffset);
+				break;
+			case REALSXP:
+				idata=calloc(xlength(data), sizeof(*idata));
+				if(idata==NULL) {
+					error("Out of memory");
+					return(R_NilValue);
+					}
+				pd=REAL(data);
+				for(i=0;i<xlength(data);i++)
+					idata[i]=pd[i];
+				
+				offset=mvl_start_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_INT64, expected_length, xlength(data), idata, *moffset);
+				free(idata);
+				break;
+			case INTSXP:
+				idata=calloc(xlength(data), sizeof(*idata));
+				if(idata==NULL) {
+					error("Out of memory");
+					return(R_NilValue);
+					}
+				pi=INTEGER(data);
+				for(i=0;i<xlength(data);i++)
+					idata[i]=pi[i];
+				
+				offset=mvl_start_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_INT64, expected_length, xlength(data), idata, *moffset);
+				free(idata);
+				break;
+			default:
+				error("can only write raw, double and integer to INT64");
+				return(R_NilValue);
+			}
+		break;
+	case LIBMVL_VECTOR_FLOAT:
+		fdata=calloc(xlength(data), sizeof(*fdata));
+		if(fdata==NULL) {
+			error("Out of memory");
+			return(R_NilValue);
+			}
+		pd=REAL(data);
+		for(i=0;i<xlength(data);i++)
+			fdata[i]=pd[i];
+		offset=mvl_start_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_FLOAT, expected_length, xlength(data), fdata, *moffset);
+		free(fdata);
+		break;
+	case LIBMVL_VECTOR_DOUBLE:
+		offset=mvl_start_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_DOUBLE, expected_length, xlength(data), REAL(data), *moffset);
+		break;
+	case LIBMVL_VECTOR_OFFSET64:
+		offset=mvl_start_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_OFFSET64, expected_length, xlength(data), REAL(data), *moffset);
+		break;
+#if 0
+	case 10000:
+		strvec=calloc(xlength(data), sizeof(*strvec));
+		if(strvec==NULL) {
+			error("Out of memory");
+			return(R_NilValue);
+			}
+		for(i=0;i<xlength(data);i++) {
+			ch=CHAR(STRING_ELT(data, i));
+			strvec[i]=mvl_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_CSTRING, strlen(ch), ch, 0);
+			}
+		offset=mvl_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_OFFSET64, xlength(data), strvec, *moffset);
+		free(strvec);
+		break;
+#else
+	case 10000:
+		error("Rewriting packed lists is not supported");
+		return(R_NilValue);
+// 		strvec2=calloc(xlength(data), sizeof(*strvec2));
+// 		if(strvec2==NULL) {
+// 			error("Out of memory");
+// 			return(R_NilValue);
+// 			}
+// 		for(i=0;i<xlength(data);i++) {
+// 			strvec2[i]=CHAR(STRING_ELT(data, i));
+// 			}
+// 		offset=mvl_write_packed_list(libraries[idx].ctx, expected_length, xlength(data), NULL, (char **)strvec2, *moffset);
+// 		free(strvec2);
+// 		break;
+#endif
+	case 10001:
+		if(length(data)!=1) {
+			error("data has to be length 1 string vector");
+			return(R_NilValue);
+			}
+		ch=CHAR(STRING_ELT(data, 0));
+		offset=mvl_start_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_CSTRING, expected_length, strlen(ch), ch, *moffset);
+		break;
+		
+	default:
+		error("write_vector: unknown type %d", type);
+		return(R_NilValue);
+	}
+ans=PROTECT(allocVector(REALSXP, 1));
+REAL(ans)[0]=*doffset;
+
+class=PROTECT(allocVector(STRSXP, 1));
+SET_STRING_ELT(class, 0, mkChar("MVL_OFFSET"));
+classgets(ans, class);
+UNPROTECT(2);
+return(ans);
+}
+
+SEXP rewrite_vector(SEXP vec0, SEXP offset, SEXP data)
+{
+long i;
+int idx, type;
+
+LIBMVL_OFFSET64 data_offset, Nelements, chunk_offset;
+const char *ch, **strvec2;
+LIBMVL_OFFSET64 *strvec;
+long long *idata;
+float *fdata;
+unsigned char *bdata;
+double *ddata;
+
+double *pd;
+int *pi;
+LIBMVL_VECTOR *vec;
+
+decode_mvl_object(vec0, &idx, &data_offset);
+vec=get_mvl_vector(idx, data_offset);
+
+if(vec==NULL) {
+	error("Invalid MVL object");
+	return(R_NilValue);
+	}
+
+if(libraries[idx].f==NULL) {
+	error("library not open for writing");
+	return(R_NilValue);
+	}
+if(mvl_get_error(libraries[idx].ctx)!=0) {
+	error("library has error status %d: %s", mvl_get_error(libraries[idx].ctx), mvl_strerror(libraries[idx].ctx));
+	return(R_NilValue);
+	}
+	
+if(length(offset)!=1) {
+	error("second parameter (offset) must be a single real or integer");
+	return(R_NilValue);
+	}
+
+switch(TYPEOF(offset)) {
+	case REALSXP:
+		chunk_offset=REAL(offset)[0]-1;
+		break;
+	case INTSXP:
+		chunk_offset=INTEGER(offset)[0]-1;
+		break;
+	default:
+		error("Unknown offset R type %d", TYPEOF(offset));
+		return(R_NilValue);
+	}
+
+type=mvl_vector_type(vec);
+
+
+switch(type) {
+	case LIBMVL_PACKED_LIST64:
+		Nelements=mvl_vector_length(vec)-1;
+		break;
+	default:
+		Nelements=mvl_vector_length(vec);
+		break;		
+	}
+	
+if(chunk_offset+xlength(data)>Nelements) {
+	error("Attempt to write past vector end");
+	return(R_NilValue);
+	}
+if(chunk_offset<0) {
+	error("Attempt to write before index 1");
+	return(R_NilValue);
+	}
+	
+
+libraries[idx].modified=1;
+
+switch(type) {
+	case LIBMVL_VECTOR_UINT8:
+		switch(TYPEOF(data)) {
+			case RAWSXP:
+				mvl_rewrite_vector(libraries[idx].ctx, type, data_offset, chunk_offset, xlength(data), RAW(data));
+				break;
+			case INTSXP:
+				bdata=calloc(xlength(data), 1);
+				if(bdata==NULL) {
+					error("Out of memory");
+					return(R_NilValue);
+					}
+				int *id=INTEGER(data);
+				for(i=0;i<xlength(data);i++)bdata[i]=id[i];
+				mvl_rewrite_vector(libraries[idx].ctx, type, data_offset, chunk_offset, xlength(data), bdata);
+				free(bdata);
+				break;
+			case REALSXP:
+				bdata=calloc(xlength(data), 1);
+				if(bdata==NULL) {
+					error("Out of memory");
+					return(R_NilValue);
+					}
+				double *fd=REAL(data);
+				for(i=0;i<xlength(data);i++)bdata[i]=fd[i];
+				mvl_rewrite_vector(libraries[idx].ctx, type, data_offset, chunk_offset, xlength(data), bdata);
+				free(bdata);
+				break;
+			case STRSXP:
+				if(xlength(data)!=1) {
+					error("Can only convert a single string to UINT8");
+					return(R_NilValue);
+					}
+				const char *bd=CHAR(STRING_ELT(data, 0));
+				mvl_rewrite_vector(libraries[idx].ctx, type, data_offset, chunk_offset, strlen(bd), bd);
+				break;
+			default:
+				error("Cannot convert R type %d to UINT8", TYPEOF(data));
+				return(R_NilValue);
+				break;
+			}
+		break;
+	case LIBMVL_VECTOR_INT32:
+		mvl_rewrite_vector(libraries[idx].ctx, type, data_offset, chunk_offset, xlength(data), INTEGER(data));
+		break;
+	case LIBMVL_VECTOR_INT64:
+		switch(TYPEOF(data)) {
+			case RAWSXP:
+//				Rprintf("Writing INT64 from RAW input length %lld output length %lld\n", xlength(data), xlength(data)/8);
+				mvl_rewrite_vector(libraries[idx].ctx, type, data_offset, chunk_offset, xlength(data)/8, RAW(data));
+				break;
+			case REALSXP:
+				idata=calloc(xlength(data), sizeof(*idata));
+				if(idata==NULL) {
+					error("Out of memory");
+					return(R_NilValue);
+					}
+				pd=REAL(data);
+				for(i=0;i<xlength(data);i++)
+					idata[i]=pd[i];
+				
+				mvl_rewrite_vector(libraries[idx].ctx, type, data_offset, chunk_offset, xlength(data), idata);
+				free(idata);
+				break;
+			case INTSXP:
+				idata=calloc(xlength(data), sizeof(*idata));
+				if(idata==NULL) {
+					error("Out of memory");
+					return(R_NilValue);
+					}
+				pi=INTEGER(data);
+				for(i=0;i<xlength(data);i++)
+					idata[i]=pi[i];
+				
+				mvl_rewrite_vector(libraries[idx].ctx, type, data_offset, chunk_offset, xlength(data), idata);
+				free(idata);
+				break;
+			default:
+				error("can only write raw, double and integer to INT64");
+				return(R_NilValue);
+			}
+		break;
+	case LIBMVL_VECTOR_FLOAT:
+		fdata=calloc(xlength(data), sizeof(*fdata));
+		if(fdata==NULL) {
+			error("Out of memory");
+			return(R_NilValue);
+			}
+		switch(TYPEOF(data)) {
+			case REALSXP:
+				pd=REAL(data);
+				for(i=0;i<xlength(data);i++)
+					fdata[i]=pd[i];
+				break;
+			case INTSXP:
+				pi=INTEGER(data);
+				for(i=0;i<xlength(data);i++)
+					fdata[i]=pi[i];
+				break;
+			default:
+				error("Cannot convert R type %d to floating point", TYPEOF(data));
+				return(R_NilValue);
+			}
+				
+		mvl_rewrite_vector(libraries[idx].ctx, type, data_offset, chunk_offset, xlength(data), fdata);
+		free(fdata);
+		break;
+	case LIBMVL_VECTOR_DOUBLE:
+		switch(TYPEOF(data)) {
+			case REALSXP:
+				mvl_rewrite_vector(libraries[idx].ctx, type, data_offset, chunk_offset, xlength(data), REAL(data));
+				break;
+			case INTSXP: {
+				ddata=calloc(xlength(data), sizeof(*ddata));
+				if(ddata==NULL) {
+					error("Out of memory");
+					return(R_NilValue);
+					}
+				pi=INTEGER(data);
+				for(i=0;i<xlength(data);i++)
+					ddata[i]=pi[i];
+				mvl_rewrite_vector(libraries[idx].ctx, type, data_offset, chunk_offset, xlength(data), ddata);
+				free(ddata);
+				break;
+				}
+			default:
+				error("Cannot convert R type %d to floating point", TYPEOF(data));
+				return(R_NilValue);
+			}
+		break;
+	case LIBMVL_VECTOR_OFFSET64:
+		mvl_rewrite_vector(libraries[idx].ctx, type, data_offset, chunk_offset, xlength(data), REAL(data));
+		break;
+#if 0
+	case 10000:
+		strvec=calloc(xlength(data), sizeof(*strvec));
+		if(strvec==NULL) {
+			error("Out of memory");
+			return(R_NilValue);
+			}
+		for(i=0;i<xlength(data);i++) {
+			ch=CHAR(STRING_ELT(data, i));
+			strvec[i]=mvl_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_CSTRING, strlen(ch), ch, 0);
+			}
+		offset=mvl_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_OFFSET64, xlength(data), strvec, *moffset);
+		free(strvec);
+		break;
+#else
+		/* Rewriting packed lists is not supported */
+// 	case 10000:
+// 		strvec2=calloc(xlength(data), sizeof(*strvec2));
+// 		if(strvec2==NULL) {
+// 			error("Out of memory");
+// 			return(R_NilValue);
+// 			}
+// 		for(i=0;i<xlength(data);i++) {
+// 			strvec2[i]=CHAR(STRING_ELT(data, i));
+// 			}
+// 		mvl_rewrite_packed_list(libraries[idx].ctx, data_offset, chunk_offset, xlength(data), NULL, (char **)strvec2);
+// 		free(strvec2);
+// 		break;
+#endif
+	case LIBMVL_VECTOR_CSTRING:
+		if(length(data)!=1) {
+			error("data has to be length 1 string vector");
+			return(R_NilValue);
+			}
+		ch=CHAR(STRING_ELT(data, 0));
+		mvl_rewrite_vector(libraries[idx].ctx, type, data_offset, chunk_offset, strlen(ch), ch);
+		break;
+		
+	default:
+		error("write_vector: unsupported type %d", type);
+		return(R_NilValue);
+	}
+return(R_NilValue);
+}
+
 SEXP fused_write_vector(SEXP idx0, SEXP type0, SEXP data_list, SEXP metadata_offset)
 {
 long i, j, k, m;
@@ -2353,6 +2948,10 @@ if(libraries[idx].ctx==NULL) {
 	}
 if(libraries[idx].f==NULL) {
 	error("library not open for writing");
+	return(R_NilValue);
+	}
+if(mvl_get_error(libraries[idx].ctx)!=0) {
+	error("library has error status %d: %s", mvl_get_error(libraries[idx].ctx), mvl_strerror(libraries[idx].ctx));
 	return(R_NilValue);
 	}
 	
@@ -2412,7 +3011,7 @@ for(k=0;k<xlength(data_list);k++) {
 					}
 				//Rprintf("STRVEC length %ld\n", mvl_vector_length(vec));
 				total_length+=mvl_vector_length(vec)-1;
-				char_total_length+=mvl_vector_data(vec).offset[mvl_vector_length(vec)-1]-mvl_vector_data(vec).offset[0];
+				char_total_length+=mvl_vector_data_offset(vec)[mvl_vector_length(vec)-1]-mvl_vector_data_offset(vec)[0];
 				break;
 			default:
 				error("Internal conversion between types of MVL objects not supported yet");
@@ -2445,7 +3044,7 @@ for(k=0;k<xlength(data_list);k++) {
 		vec=get_mvl_vector(data_idx, data_offset);
 		
 		if(mvl_vector_type(vec)==type) {
-			mvl_rewrite_vector(libraries[idx].ctx, type, offset, vec_idx, mvl_vector_length(vec), &(mvl_vector_data(vec)));
+			mvl_rewrite_vector(libraries[idx].ctx, type, offset, vec_idx, mvl_vector_length(vec), (mvl_vector_data_uint8(vec)));
 			vec_idx+=mvl_vector_length(vec);
 			continue;
 			}
@@ -2460,12 +3059,12 @@ for(k=0;k<xlength(data_list);k++) {
 			case LIBMVL_VECTOR_DOUBLE:
 				break;
 			case 10000:
-				pc=(unsigned char *)get_mvl_vector(data_idx, mvl_vector_data(vec).offset[0]);
+				pc=sizeof(LIBMVL_VECTOR_HEADER)+(unsigned char *)get_mvl_vector(data_idx, mvl_vector_data_offset(vec)[0]-sizeof(LIBMVL_VECTOR_HEADER));
 				if(pc==NULL) {
 					error("Invalid packed list");
 					return(R_NilValue);
 					}
-				mvl_rewrite_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, char_offset-sizeof(LIBMVL_VECTOR_HEADER), char_idx, mvl_vector_data(vec).offset[mvl_vector_length(vec)-1]-mvl_vector_data(vec).offset[0], pc);
+				mvl_rewrite_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, char_offset-sizeof(LIBMVL_VECTOR_HEADER), char_idx, mvl_vector_data_offset(vec)[mvl_vector_length(vec)-1]-mvl_vector_data_offset(vec)[0], pc);
 				//Rprintf("s# %ld %ld\n", vec_idx, char_idx);
 
 				#define REWRITE_BUF_SIZE (1024*1024)
@@ -2478,16 +3077,16 @@ for(k=0;k<xlength(data_list);k++) {
 				
 				for(j=1;j<mvl_vector_length(vec);j+=REWRITE_BUF_SIZE) {
 					for(i=0;i+j<mvl_vector_length(vec) && i<REWRITE_BUF_SIZE;i++)
-						strvec[i]=char_offset+char_idx+(mvl_vector_data(vec).offset[j+i]-mvl_vector_data(vec).offset[0]);
+						strvec[i]=char_offset+char_idx+(mvl_vector_data_offset(vec)[j+i]-mvl_vector_data_offset(vec)[0]);
 					i=j+REWRITE_BUF_SIZE>=mvl_vector_length(vec) ? mvl_vector_length(vec)-j : REWRITE_BUF_SIZE;
 					mvl_rewrite_vector(libraries[idx].ctx, LIBMVL_PACKED_LIST64, offset, vec_idx, i, strvec);
 					vec_idx+=i;
 					}
 					
 				
-				/* TODO: all offsets need to shift by char_idx-mvl_vector_data(vec).offset[0] */
+				/* TODO: all offsets need to shift by char_idx-mvl_vector_data_offset(vec)[0] */
 				
-				char_idx+=mvl_vector_data(vec).offset[mvl_vector_length(vec)-1]-mvl_vector_data(vec).offset[0];
+				char_idx+=mvl_vector_data_offset(vec)[mvl_vector_length(vec)-1]-mvl_vector_data_offset(vec)[0];
 				//Rprintf("s#2 %ld %ld\n", vec_idx, char_idx);
 				
 				free(strvec);
@@ -2656,6 +3255,10 @@ if(libraries[idx].f==NULL) {
 	error("library not open for writing");
 	return(R_NilValue);
 	}
+if(mvl_get_error(libraries[idx].ctx)!=0) {
+	error("library has error status %d: %s", mvl_get_error(libraries[idx].ctx), mvl_strerror(libraries[idx].ctx));
+	return(R_NilValue);
+	}
 		
 if(length(metadata_offset)<1) {
 	*moffset=0;
@@ -2781,19 +3384,19 @@ switch(TYPEOF(indices)) {
 		
 		switch(mvl_vector_type(vec)) {
 			case LIBMVL_VECTOR_OFFSET64:
-				memcpy(v_idx, mvl_vector_data(vec).offset, N*sizeof(*v_idx));
+				memcpy(v_idx, mvl_vector_data_offset(vec), N*sizeof(*v_idx));
 				break;
 			case LIBMVL_VECTOR_INT32:
-				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data(vec).i[m];
+				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data_int32(vec)[m];
 				break;
 			case LIBMVL_VECTOR_INT64:
-				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data(vec).i64[m];
+				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data_int64(vec)[m];
 				break;
 			case LIBMVL_VECTOR_DOUBLE:
-				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data(vec).d[m];
+				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data_double(vec)[m];
 				break;
 			case LIBMVL_VECTOR_FLOAT:
-				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data(vec).f[m];
+				for(LIBMVL_OFFSET64 m=0;m<N;m++)v_idx[m]=mvl_vector_data_float(vec)[m];
 				break;
 			default:
 				error("Cannot interpret MVL object as indices");
@@ -2925,7 +3528,7 @@ if(get_indices(indices, vectors[0], &N, &v_idx)) {
 	
 ans=PROTECT(allocVector(REALSXP, N));
 pd=REAL(ans);
-if((err=mvl_hash_indices(N, v_idx, (LIBMVL_OFFSET64 *)pd, xlength(data_list), vectors, vec_data))!=0) {
+if((err=mvl_hash_indices(N, v_idx, (LIBMVL_OFFSET64 *)pd, xlength(data_list), vectors, vec_data, LIBMVL_COMPLETE_HASH))!=0) {
 	free(vec_data);
 	free(vectors);
 	free(v_idx);
@@ -2975,6 +3578,10 @@ if(libraries[idx].ctx==NULL) {
 	}
 if(libraries[idx].f==NULL) {
 	error("library not open for writing");
+	return(R_NilValue);
+	}
+if(mvl_get_error(libraries[idx].ctx)!=0) {
+	error("library has error status %d: %s", mvl_get_error(libraries[idx].ctx), mvl_strerror(libraries[idx].ctx));
 	return(R_NilValue);
 	}
 
@@ -3027,7 +3634,7 @@ for(LIBMVL_OFFSET64 k=0;k<N;k+=N_BLOCK) {
 	for(int i=0;i<count;i++) {
 		v_idx[i]=k+i;
 		}
-	if((err=mvl_hash_indices(count, v_idx, hash, xlength(data_list), vectors, vec_data))!=0) {
+	if((err=mvl_hash_indices(count, v_idx, hash, xlength(data_list), vectors, vec_data, LIBMVL_COMPLETE_HASH))!=0) {
 		free(vec_data);
 		free(vectors);
 		free(v_idx);
@@ -3075,7 +3682,7 @@ LIBMVL_NAMED_LIST *L;
 SEXP ans, class;
 	
 if(length(idx0)!=1) {
-	error("fused_write_vector first argument must be a single integer");
+	error("write_groups first argument must be a single integer");
 	return(R_NilValue);
 	}
 idx=INTEGER(idx0)[0];
@@ -3091,9 +3698,13 @@ if(libraries[idx].f==NULL) {
 	error("library not open for writing");
 	return(R_NilValue);
 	}
+if(mvl_get_error(libraries[idx].ctx)!=0) {
+	error("library has error status %d: %s", mvl_get_error(libraries[idx].ctx), mvl_strerror(libraries[idx].ctx));
+	return(R_NilValue);
+	}
 
 if(TYPEOF(data_list)!=VECSXP) {
-	error("order_vectors first argument must be a list of data to sort");
+	error("write_groups first argument must be a list of data to sort");
 	return(R_NilValue);
 	}
 
@@ -3109,7 +3720,7 @@ hash=calloc(N_BLOCK, sizeof(*v_idx));
 count=calloc(N_BLOCK, sizeof(*count));
 first=calloc(N_BLOCK, sizeof(*first));
 prev=calloc(N_BLOCK, sizeof(*prev));
-if(vec_data==NULL || vectors==NULL || v_idx==NULL || hash==NULL || first==NULL || prev==NULL) {
+if(vec_data==NULL || vectors==NULL || v_idx==NULL || hash==NULL || first==NULL || prev==NULL || count==NULL) {
 	error("Not enough memory");
 	free(vec_data);
 	free(vectors);
@@ -3117,6 +3728,7 @@ if(vec_data==NULL || vectors==NULL || v_idx==NULL || hash==NULL || first==NULL |
 	free(hash);
 	free(first);
 	free(prev);
+	free(count);
 	return(R_NilValue);
 	}
 
@@ -3140,6 +3752,7 @@ for(LIBMVL_OFFSET64 k=0;k<xlength(data_list);k++) {
 	}
 
 N=mvl_vector_length(vectors[0]);
+if(mvl_vector_type(vectors[0])==LIBMVL_PACKED_LIST64)N--;
 
 offset=mvl_start_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_INT64, N, 0, NULL, LIBMVL_NO_METADATA);
 
@@ -3154,7 +3767,7 @@ for(LIBMVL_OFFSET64 k=0;k<N;k+=N_BLOCK) {
 	for(int i=0;i<bcount;i++) {
 		v_idx[i]=k+i;
 		}
-	if((err=mvl_hash_indices(bcount, v_idx, hash, xlength(data_list), vectors, vec_data))!=0) {
+	if((err=mvl_hash_indices(bcount, v_idx, hash, xlength(data_list), vectors, vec_data, LIBMVL_COMPLETE_HASH))!=0) {
 		free(vec_data);
 		free(vectors);
 		free(v_idx);
@@ -3255,6 +3868,10 @@ if(libraries[idx].ctx==NULL) {
 	}
 if(libraries[idx].f==NULL) {
 	error("library not open for writing");
+	return(R_NilValue);
+	}
+if(mvl_get_error(libraries[idx].ctx)!=0) {
+	error("library has error status %d: %s", mvl_get_error(libraries[idx].ctx), mvl_strerror(libraries[idx].ctx));
 	return(R_NilValue);
 	}
 
@@ -3454,6 +4071,10 @@ if(libraries[idx].f==NULL) {
 	error("library not open for writing");
 	return(R_NilValue);
 	}
+if(mvl_get_error(libraries[idx].ctx)!=0) {
+	error("library has error status %d: %s", mvl_get_error(libraries[idx].ctx), mvl_strerror(libraries[idx].ctx));
+	return(R_NilValue);
+	}
 
 if(TYPEOF(data_list)!=VECSXP) {
 	error("order_vectors first argument must be a list of data to sort");
@@ -3651,6 +4272,7 @@ for(LIBMVL_OFFSET64 k=0;k<N;k+=N_BLOCK) {
 // 	}
 	
 L=mvl_create_named_list(2);
+mvl_add_list_entry(L, -1, "index_type", MVL_WVEC(libraries[idx].ctx, LIBMVL_VECTOR_INT32, MVL_SPATIAL_INDEX1));
 mvl_add_list_entry(L, -1, "first", mvl_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_INT64, first_idx_free, first, LIBMVL_NO_METADATA));
 mvl_add_list_entry(L, -1, "count", mvl_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_INT64, first_idx_free, count, LIBMVL_NO_METADATA));
 mvl_add_list_entry(L, -1, "mark", mvl_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_INT64, first_idx_free, first_hash, LIBMVL_NO_METADATA));
@@ -3686,7 +4308,7 @@ if(N2>first_idx_size) {
 mvl_add_list_entry(L, -1, "first_mark", mvl_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_INT64, N2, first, LIBMVL_NO_METADATA));
 mvl_add_list_entry(L, -1, "prev_mark", mvl_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_INT64, first_idx_free, first_idx_prev, LIBMVL_NO_METADATA));
 
-offset=mvl_write_named_list(libraries[idx].ctx, L);
+offset=mvl_write_named_list2(libraries[idx].ctx, L, "MVL_INDEX");
 mvl_free_named_list(L);
 
 free(vec_data);
@@ -3763,6 +4385,7 @@ switch(TYPEOF(sexp)) {
 	case INTSXP:
 		pi=INTEGER(sexp);
 		if(i1>xlength(sexp)) {
+			error("Vector lengths do not match");
 			memset(out, 0, (i1-i0)*sizeof(*out));
 			i1=xlength(sexp);
 			}
@@ -3773,6 +4396,125 @@ switch(TYPEOF(sexp)) {
 		error("Cannot handle R vector of type %d", TYPEOF(sexp));
 		memset(out, 0, (i1-i0)*sizeof(*out));
 		return;
+	}
+}
+
+/* Pass -1 to expected type to disable it */
+int hash_vector_range(SEXP sexp, LIBMVL_OFFSET64 i0, LIBMVL_OFFSET64 i1, int expected_type, LIBMVL_OFFSET64 *out)
+{
+int data_idx;
+LIBMVL_OFFSET64 data_offset;
+LIBMVL_VECTOR *vec;
+double *pd;
+int *pi;
+char *ps;
+int err;
+long long da;
+double dd;
+int warn_once=1;
+
+if(i0>=i1)return 0;
+
+switch(TYPEOF(sexp)) {
+	case VECSXP: 
+		decode_mvl_object(sexp, &data_idx, &data_offset);
+		vec=get_mvl_vector(data_idx, data_offset);
+		if(vec==NULL) {
+			error("Provided vector is a list and not an MVL object");
+			memset(out, 0, (i1-i0)*sizeof(*out));
+			return -1;
+			}
+		if(0 && mvl_vector_type(vec)!=expected_type) {
+			error("Vector types do not match: expected %d got %d", mvl_vector_type(vec), expected_type);
+			}
+		if((err=mvl_hash_range(i0, i1, out, 1, &vec, (void **)&(libraries[data_idx].data), LIBMVL_ACCUMULATE_HASH))!=0) {
+			error("Error computing hashes (%d)", err);
+			memset(out, 0, (i1-i0)*sizeof(*out));
+			return -1;
+			}
+		return 0;
+	case REALSXP:
+		pd=REAL(sexp);
+		if(i1>xlength(sexp)) {
+			error("Vector lengths do not match");
+			memset(out, 0, (i1-i0)*sizeof(*out));
+			i1=xlength(sexp);
+			}
+		switch(expected_type) {
+			case LIBMVL_VECTOR_INT32:
+			case LIBMVL_VECTOR_INT64:
+				for(LIBMVL_OFFSET64 i=i0;i<i1;i++) {
+					dd=floor(pd[i]);
+					if(dd!=pd[i] && warn_once) {
+						error("numeric() values are not integer when quering integer vector");
+						warn_once=0;
+						}
+					da=dd;
+					out[i-i0]=mvl_accumulate_int64_hash64(out[i-i0], &(da), 1);
+					}
+				break;
+			case LIBMVL_VECTOR_FLOAT:
+			case LIBMVL_VECTOR_DOUBLE:
+				for(LIBMVL_OFFSET64 i=i0;i<i1;i++)
+					out[i-i0]=mvl_accumulate_double_hash64(out[i-i0], &(pd[i]), 1);
+				break;
+			default:
+				if(expected_type>=0) {
+					error("using numeric() values to query MVL vector of type %d", expected_type);
+					warn_once=0;
+					}
+				for(LIBMVL_OFFSET64 i=i0;i<i1;i++)
+					out[i-i0]=mvl_accumulate_double_hash64(out[i-i0], &(pd[i]), 1);
+				break;
+			}
+		return 0;
+	case INTSXP:
+		pi=INTEGER(sexp);
+		if(i1>xlength(sexp)) {
+			error("Vector lengths do not match");
+			memset(out, 0, (i1-i0)*sizeof(*out));
+			i1=xlength(sexp);
+			}
+		switch(expected_type) {
+			case LIBMVL_VECTOR_INT32:
+			case LIBMVL_VECTOR_INT64:
+				for(LIBMVL_OFFSET64 i=i0;i<i1;i++)
+					out[i-i0]=mvl_accumulate_int32_hash64(out[i-i0], &(pi[i]), 1);
+				break;
+			case LIBMVL_VECTOR_FLOAT:
+			case LIBMVL_VECTOR_DOUBLE:
+				for(LIBMVL_OFFSET64 i=i0;i<i1;i++) {
+					dd=pi[i];
+					out[i-i0]=mvl_accumulate_double_hash64(out[i-i0], &(dd), 1);
+					}
+				break;
+			default:
+				if(expected_type>=0) {
+					error("using numeric() values to query MVL vector of type %d", expected_type);
+					warn_once=0;
+					}
+				for(LIBMVL_OFFSET64 i=i0;i<i1;i++)
+					out[i-i0]=mvl_accumulate_int32_hash64(out[i-i0], &(pi[i]), 1);
+				break;
+			}
+		return 0;
+	case STRSXP:
+		if(i1>xlength(sexp)) {
+			error("Vector lengths do not match");
+			memset(out, 0, (i1-i0)*sizeof(*out));
+			i1=xlength(sexp);
+			}
+		/* TODO: NA_STRING in R is just "NA" we might, or might not want to alter the code below */
+		for(LIBMVL_OFFSET64 i=i0;i<i1;i++) {
+			ps=CHAR(STRING_ELT(sexp, i));
+			out[i-i0]=mvl_accumulate_hash64(out[i-i0], ps, strlen(ps));
+			}
+		
+		return 0;
+	default:
+		error("Cannot handle R vector of type %d", TYPEOF(sexp));
+		memset(out, 0, (i1-i0)*sizeof(*out));
+		return 0;
 	}
 }
 
@@ -3833,7 +4575,7 @@ if(mvl_vector_type(vec_bits)!=LIBMVL_VECTOR_INT32
 	
 N2=mvl_vector_length(vec_first_mark);
 	
-bits=mvl_vector_data(vec_bits).i;
+bits=mvl_vector_data_int32(vec_bits);
 Nbits=mvl_vector_length(vec_bits);
 
 if(Nbits!=length(data_list) || length(data_list)==0) {
@@ -3842,20 +4584,20 @@ if(Nbits!=length(data_list) || length(data_list)==0) {
 	return(R_NilValue);
 	}
 	
-if(Nbits*4!=mvl_vector_length(vec_stats)) {
+if(Nbits*sizeof(LIBMVL_VEC_STATS)!=mvl_vector_length(vec_stats)*sizeof(double)) {
 	mvl_free_named_list(L);
-	error("Not a spatial index (4)");
+	error("Not a spatial index (4) : malformed vector statistics");
 	return(R_NilValue);
 	}
 	
-vstats=(LIBMVL_VEC_STATS *)mvl_vector_data(vec_stats).f;
+vstats=(LIBMVL_VEC_STATS *)mvl_vector_data_double(vec_stats);
 
-first_mark=mvl_vector_data(vec_first_mark).i64;
-prev_mark=mvl_vector_data(vec_prev_mark).i64;
-mark=mvl_vector_data(vec_mark).i64;
-prev=mvl_vector_data(vec_prev).i64;
-first=mvl_vector_data(vec_first).i64;
-max_count=mvl_vector_data(vec_max_count).i64[0];
+first_mark=mvl_vector_data_int64(vec_first_mark);
+prev_mark=mvl_vector_data_int64(vec_prev_mark);
+mark=mvl_vector_data_int64(vec_mark);
+prev=mvl_vector_data_int64(vec_prev);
+first=mvl_vector_data_int64(vec_first);
+max_count=mvl_vector_data_int64(vec_max_count)[0];
 
 
 switch(TYPEOF(VECTOR_ELT(data_list, 0))) {
@@ -4060,7 +4802,7 @@ if(mvl_vector_type(vec_bits)!=LIBMVL_VECTOR_INT32
 	
 N2=mvl_vector_length(vec_first_mark);
 	
-bits=mvl_vector_data(vec_bits).i;
+bits=mvl_vector_data_int32(vec_bits);
 Nbits=mvl_vector_length(vec_bits);
 
 if(Nbits!=length(data_list) || length(data_list)==0) {
@@ -4069,20 +4811,20 @@ if(Nbits!=length(data_list) || length(data_list)==0) {
 	return(R_NilValue);
 	}
 	
-if(Nbits*4!=mvl_vector_length(vec_stats)) {
+if(Nbits*sizeof(LIBMVL_VEC_STATS)!=mvl_vector_length(vec_stats)*sizeof(double)) {
 	mvl_free_named_list(L);
-	error("Not a spatial index (4)");
+	error("Not a spatial index (4) : malformed vectors statistics");
 	return(R_NilValue);
 	}
 	
-vstats=(LIBMVL_VEC_STATS *)mvl_vector_data(vec_stats).f;
+vstats=(LIBMVL_VEC_STATS *)mvl_vector_data_float(vec_stats);
 
-first_mark=mvl_vector_data(vec_first_mark).i64;
-prev_mark=mvl_vector_data(vec_prev_mark).i64;
-mark=mvl_vector_data(vec_mark).i64;
-prev=mvl_vector_data(vec_prev).i64;
-first=mvl_vector_data(vec_first).i64;
-max_count=mvl_vector_data(vec_max_count).i64[0];
+first_mark=mvl_vector_data_int64(vec_first_mark);
+prev_mark=mvl_vector_data_int64(vec_prev_mark);
+mark=mvl_vector_data_int64(vec_mark);
+prev=mvl_vector_data_int64(vec_prev);
+first=mvl_vector_data_int64(vec_first);
+max_count=mvl_vector_data_int64(vec_max_count)[0];
 
 
 switch(TYPEOF(VECTOR_ELT(data_list, 0))) {
@@ -4269,7 +5011,7 @@ if(get_indices(indices, vec, &N, &v_idx)) {
 count=0;
 switch(mvl_vector_type(vec)) {
 	case LIBMVL_VECTOR_INT64: {
-		long long *pi=mvl_vector_data(vec).i64;
+		long long *pi=mvl_vector_data_int64(vec);
 		for(LIBMVL_OFFSET64 i=0;i<N;i++) {
 			k=v_idx[i];
 			while(k>=0 && k<Nv) {
@@ -4280,7 +5022,7 @@ switch(mvl_vector_type(vec)) {
 		break;
 		}
 	case LIBMVL_VECTOR_INT32: {
-		int *pi=mvl_vector_data(vec).i;
+		int *pi=mvl_vector_data_int32(vec);
 		for(LIBMVL_OFFSET64 i=0;i<N;i++) {
 			k=v_idx[i];
 			while(k>=0 && k<Nv) {
@@ -4291,7 +5033,7 @@ switch(mvl_vector_type(vec)) {
 		break;
 		}
 	case LIBMVL_VECTOR_DOUBLE: {
-		double *pi=mvl_vector_data(vec).d;
+		double *pi=mvl_vector_data_double(vec);
 		for(LIBMVL_OFFSET64 i=0;i<N;i++) {
 			k=v_idx[i];
 			while(k>=0 && k<Nv) {
@@ -4313,7 +5055,7 @@ apd=REAL(ans);
 count=0;
 switch(mvl_vector_type(vec)) {
 	case LIBMVL_VECTOR_INT64: {
-		long long *pi=mvl_vector_data(vec).i64;
+		long long *pi=mvl_vector_data_int64(vec);
 		for(LIBMVL_OFFSET64 i=0;i<N;i++) {
 			k=v_idx[i];
 			while(k>=0 && k<Nv) {
@@ -4325,7 +5067,7 @@ switch(mvl_vector_type(vec)) {
 		break;
 		}
 	case LIBMVL_VECTOR_INT32: {
-		int *pi=mvl_vector_data(vec).i;
+		int *pi=mvl_vector_data_int32(vec);
 		for(LIBMVL_OFFSET64 i=0;i<N;i++) {
 			k=v_idx[i];
 			while(k>=0 && k<Nv) {
@@ -4337,7 +5079,7 @@ switch(mvl_vector_type(vec)) {
 		break;
 		}
 	case LIBMVL_VECTOR_DOUBLE: {
-		double *pi=mvl_vector_data(vec).d;
+		double *pi=mvl_vector_data_double(vec);
 		for(LIBMVL_OFFSET64 i=0;i<N;i++) {
 			k=v_idx[i];
 			while(k>=0 && k<Nv) {
@@ -4496,7 +5238,7 @@ if(key_hash==NULL) {
 	return(R_NilValue);
 	}
 
-if((err=mvl_hash_indices(N0, v_idx0, key_hash, xlength(data_list0), vectors0, vec_data0))!=0) {
+if((err=mvl_hash_indices(N0, v_idx0, key_hash, xlength(data_list0), vectors0, vec_data0, LIBMVL_COMPLETE_HASH))!=0) {
 	free(vec_data0);
 	free(vectors0);
 	free(vec_data1);
@@ -4513,7 +5255,7 @@ hm=mvl_allocate_hash_map(N1);
 hm->hash_count=N1;
 
 //Rprintf("Computing data hash\n");
-if((err=mvl_hash_indices(N1, v_idx1, hm->hash, xlength(data_list1), vectors1, vec_data1))!=0) {
+if((err=mvl_hash_indices(N1, v_idx1, hm->hash, xlength(data_list1), vectors1, vec_data1, LIBMVL_COMPLETE_HASH))!=0) {
 	free(vec_data0);
 	free(vectors0);
 	free(vec_data1);
@@ -4620,7 +5362,7 @@ free(match_indices);
 return(ans);
 }
 
-SEXP mvl_xlength(SEXP obj)
+SEXP mvl_xlength_int(SEXP obj)
 {
 SEXP ans;
 
@@ -4700,7 +5442,7 @@ hm=mvl_allocate_hash_map(N);
 hm->hash_count=N;
 
 //Rprintf("Computing data hash\n");
-if((err=mvl_hash_indices(N, v_idx, hm->hash, xlength(data_list), vectors, vec_data))!=0) {
+if((err=mvl_hash_indices(N, v_idx, hm->hash, xlength(data_list), vectors, vec_data, LIBMVL_COMPLETE_HASH))!=0) {
 	free(vec_data);
 	free(vectors);
 	free(v_idx);
@@ -4806,39 +5548,402 @@ return(ans);
 }
 
 
+SEXP compute_repeats(SEXP data_list)
+{
+int data_idx;
+LIBMVL_OFFSET64 data_offset;
+SEXP data;
+
+void **vec_data;
+LIBMVL_VECTOR **vectors;
+double *dans;
+
+LIBMVL_PARTITION el;
+
+SEXP ans;
+	
+
+if(TYPEOF(data_list)!=VECSXP) {
+	error("compute_repeats first argument must be a list of data to sort");
+	return(R_NilValue);
+	}
+
+if(xlength(data_list)<1) {
+	error("No hashes to compute");
+	return(R_NilValue);
+	}
+	
+vec_data=calloc(xlength(data_list), sizeof(*vec_data));
+vectors=calloc(xlength(data_list), sizeof(*vectors));
+if(vec_data==NULL || vectors==NULL) {
+	error("Not enough memory");
+	free(vec_data);
+	free(vectors);
+	return(R_NilValue);
+	}
+
+for(LIBMVL_OFFSET64 k=0;k<xlength(data_list);k++) {
+	data=VECTOR_ELT(data_list, k);
+	decode_mvl_object(data, &data_idx, &data_offset);
+	vectors[k]=get_mvl_vector(data_idx, data_offset);
+	
+	if(vectors[k]==NULL) {
+		error("Invalid MVL object in data list");
+		free(vec_data);
+		free(vectors);
+		return(R_NilValue);
+		}
+	vec_data[k]=libraries[data_idx].data;
+	}
+
+memset(&el, 0, sizeof(el));
+mvl_find_repeats(&el, xlength(data_list), vectors, vec_data);
+
+ans=PROTECT(allocVector(REALSXP, el.count+1));
+dans=REAL(ans);
+
+for(LIBMVL_OFFSET64 i=0;i<el.count;i++) dans[i]=el.offset[i]+1;
+
+mvl_free_partition_arrays(&el);
+free(vec_data);
+free(vectors);
+	
+UNPROTECT(1);
+
+return(ans);	
+}
+
+SEXP write_extent_index(SEXP idx0, SEXP data_list)
+{
+int idx, data_idx;
+LIBMVL_OFFSET64 data_offset;
+SEXP data;
+
+void **vec_data;
+LIBMVL_VECTOR **vectors;
+LIBMVL_OFFSET64 offset;
+double *doffset=(double *)&offset;
+
+LIBMVL_EXTENT_INDEX ei;
+
+SEXP ans, class;
+	
+if(length(idx0)!=1) {
+	error("write_extent_index first argument must be a single integer");
+	return(R_NilValue);
+	}
+idx=INTEGER(idx0)[0];
+if(idx<0 || idx>=libraries_free) {
+	error("no such library");
+	return(R_NilValue);
+	}
+if(libraries[idx].ctx==NULL) {
+	error("no such library");
+	return(R_NilValue);
+	}
+if(libraries[idx].f==NULL) {
+	error("library not open for writing");
+	return(R_NilValue);
+	}
+if(mvl_get_error(libraries[idx].ctx)!=0) {
+	error("library has error status %d: %s", mvl_get_error(libraries[idx].ctx), mvl_strerror(libraries[idx].ctx));
+	return(R_NilValue);
+	}
+
+
+if(TYPEOF(data_list)!=VECSXP) {
+	error("compute_extent_index second argument must be a list of data to index");
+	return(R_NilValue);
+	}
+
+if(xlength(data_list)<1) {
+	error("No vectors to index");
+	return(R_NilValue);
+	}
+	
+vec_data=calloc(xlength(data_list), sizeof(*vec_data));
+vectors=calloc(xlength(data_list), sizeof(*vectors));
+if(vec_data==NULL || vectors==NULL) {
+	error("Not enough memory");
+	free(vec_data);
+	free(vectors);
+	return(R_NilValue);
+	}
+
+for(LIBMVL_OFFSET64 k=0;k<xlength(data_list);k++) {
+	data=VECTOR_ELT(data_list, k);
+	decode_mvl_object(data, &data_idx, &data_offset);
+	vectors[k]=get_mvl_vector(data_idx, data_offset);
+	
+	if(vectors[k]==NULL) {
+		error("Invalid MVL object in data list");
+		free(vec_data);
+		free(vectors);
+		return(R_NilValue);
+		}
+	vec_data[k]=libraries[data_idx].data;
+	}
+
+mvl_init_extent_index(&ei);
+mvl_compute_extent_index(&ei, xlength(data_list), vectors, vec_data);
+offset=mvl_write_extent_index(libraries[idx].ctx, &ei);
+
+mvl_free_extent_index_arrays(&ei);
+
+free(vec_data);
+free(vectors);
+	
+ans=PROTECT(allocVector(REALSXP, 1));
+REAL(ans)[0]=*doffset;
+
+class=PROTECT(allocVector(STRSXP, 1));
+SET_STRING_ELT(class, 0, mkChar("MVL_OFFSET"));
+classgets(ans, class);
+UNPROTECT(2);
+
+return(ans);	
+}
+
+SEXP extent_index_lapply(SEXP extent_index0, SEXP data_list, SEXP fn, SEXP env)
+{
+LIBMVL_OFFSET64 data_offset, index_offset, Nv, indices_free, *hash, k;
+int data_idx, index_idx, err;
+LIBMVL_VECTOR *vec;
+SEXP ans, sa, R_fcall, tmp;
+double *pd;
+LIBMVL_EXTENT_INDEX ei;
+LIBMVL_EXTENT_LIST el;
+
+if(TYPEOF(data_list)!=VECSXP) {
+	error("Second argument should be a list (or data frame) of vectors to query");
+	return(R_NilValue);
+	}
+	
+decode_mvl_object(extent_index0, &index_idx, &index_offset);
+
+if(index_idx<0) {
+	error("extent index is not an MVL OBJECT");
+	return(R_NilValue);
+	}
+
+mvl_init_extent_index(&ei);
+
+if((err=mvl_load_extent_index(libraries[index_idx].ctx, libraries[index_idx].data, index_offset, &ei))!=0) {
+	error("Error accessing extent index (%d): %s", err, mvl_strerror(libraries[index_idx].ctx));
+	return(R_NilValue);
+	}
+
+if(xlength(data_list)!=ei.hash_map.vec_count) {
+	error("Number of vectors (columns) does not match - original index used %d vectors", ei.hash_map.vec_count);
+	mvl_free_extent_index_arrays(&ei);
+	return(R_NilValue);
+	}
+	
+switch(TYPEOF(VECTOR_ELT(data_list, 0))) {
+	case REALSXP:
+	case INTSXP:
+	case STRSXP:
+		Nv=xlength(VECTOR_ELT(data_list, 0));
+		break;
+	case VECSXP:
+		decode_mvl_object(VECTOR_ELT(data_list, 0), &data_idx, &data_offset);
+		vec=get_mvl_vector(data_idx, data_offset);
+		if(vec==NULL) {
+			mvl_free_extent_list_arrays(&el);
+			error("Not an MVL object");
+			return(R_NilValue);
+			}
+		Nv=mvl_vector_length(vec);
+		if(mvl_vector_type(vec)==LIBMVL_PACKED_LIST64)Nv--;
+		break;
+	default:
+		mvl_free_extent_index_arrays(&ei);
+		error("Cannot handle R vector of type %d", TYPEOF(VECTOR_ELT(data_list, 0)));
+		return(R_NilValue);
+		break;
+	}
+	
+
+hash=calloc(Nv, sizeof(*hash));
+
+for(LIBMVL_OFFSET64 i=0;i<Nv;i++)hash[i]=MVL_SEED_HASH_VALUE;
+
+for(LIBMVL_OFFSET64 i=0;i<xlength(data_list);i++) {
+	if(hash_vector_range(VECTOR_ELT(data_list, i), 0, Nv, ei.hash_map.vec_types[i], hash)) {
+		return(R_NilValue);
+		}
+	}
+	
+for(LIBMVL_OFFSET64 i=0;i<Nv;i++)hash[i]=mvl_randomize_bits64(hash[i]);
+	
+ans=PROTECT(allocVector(VECSXP, Nv));	
+
+R_fcall = PROTECT(lang3(fn, R_NilValue, R_NilValue));
+	
+mvl_init_extent_list(&el);
+
+for(LIBMVL_OFFSET64 i=0;i<Nv;i++) {
+	mvl_empty_extent_list(&el);
+	mvl_get_extents(&ei, hash[i], &el);
+	
+	indices_free=0;
+	
+	for(LIBMVL_OFFSET64 j=0;j<el.count;j++)indices_free+=el.stop[j]-el.start[j];
+	
+	if(indices_free<1)continue;
+	
+	sa=PROTECT(allocVector(REALSXP, indices_free));
+	pd=REAL(sa);
+	
+	k=0;
+	for(LIBMVL_OFFSET64 j=0;j<el.count;j++) {
+		for(LIBMVL_OFFSET64 m=el.start[j]; m<el.stop[j];m++,k++)
+			pd[k]=m+1;
+		}
+	
+
+	SETCADR(R_fcall, ScalarReal(i+1));
+	SETCADDR(R_fcall, sa);
+//	fprintf(stderr, "%lld %d %d %d (a)\n", i, MAYBE_REFERENCED(sa), -1, -1);
+	tmp=eval(R_fcall, env);
+//	if(MAYBE_REFERENCED(tmp))tmp=duplicate(tmp);
+//	fprintf(stderr, "%lld %d %d %d (b)\n", i, MAYBE_REFERENCED(sa), -1, MAYBE_REFERENCED(tmp));
+
+	SET_VECTOR_ELT(ans, i, tmp);
+	UNPROTECT(1);
+	}
+	
+mvl_free_extent_list_arrays(&el);
+	
+free(hash);
+
+UNPROTECT(2);
+return(ans);
+}
+
+SEXP extent_index_scan(SEXP extent_index0, SEXP fn, SEXP env)
+{
+LIBMVL_OFFSET64 index_offset, Nv, indices_free, k;
+int index_idx, err;
+SEXP ans, sa, R_fcall, tmp;
+double *pd;
+LIBMVL_EXTENT_INDEX ei;
+LIBMVL_EXTENT_LIST el;
+
+decode_mvl_object(extent_index0, &index_idx, &index_offset);
+
+mvl_init_extent_index(&ei);
+
+if((err=mvl_load_extent_index(libraries[index_idx].ctx, libraries[index_idx].data, index_offset, &ei))!=0) {
+	error("Error accessing extent index (%d): %s", err, mvl_strerror(libraries[index_idx].ctx));
+	return(R_NilValue);
+	}
+
+
+Nv=ei.hash_map.hash_count;
+
+	
+ans=PROTECT(allocVector(VECSXP, Nv));	
+
+R_fcall = PROTECT(lang3(fn, R_NilValue, R_NilValue));
+	
+mvl_init_extent_list(&el);
+
+for(LIBMVL_OFFSET64 i=0;i<Nv;i++) {
+	mvl_empty_extent_list(&el);
+	mvl_get_extents(&ei, ei.hash_map.hash[i], &el);
+	
+	indices_free=0;
+	
+	for(LIBMVL_OFFSET64 j=0;j<el.count;j++)indices_free+=el.stop[j]-el.start[j];
+	
+	if(indices_free<1)continue;
+	
+	sa=PROTECT(allocVector(REALSXP, indices_free));
+	pd=REAL(sa);
+	
+	k=0;
+	for(LIBMVL_OFFSET64 j=0;j<el.count;j++) {
+		for(LIBMVL_OFFSET64 m=el.start[j]; m<el.stop[j];m++,k++)
+			pd[k]=m+1;
+		}
+	
+
+	SETCADR(R_fcall, ScalarReal(i+1));
+	SETCADDR(R_fcall, sa);
+//	fprintf(stderr, "%lld %d %d %d (a)\n", i, MAYBE_REFERENCED(sa), -1, -1);
+	tmp=eval(R_fcall, env);
+//	if(MAYBE_REFERENCED(tmp))tmp=duplicate(tmp);
+//	fprintf(stderr, "%lld %d %d %d (b)\n", i, MAYBE_REFERENCED(sa), -1, MAYBE_REFERENCED(tmp));
+
+	SET_VECTOR_ELT(ans, i, tmp);
+	UNPROTECT(1);
+	}
+	
+mvl_free_extent_list_arrays(&el);
+mvl_free_extent_index_arrays(&ei);
+	
+UNPROTECT(2);
+return(ans);
+}
+
+
+static const R_CMethodDef cMethods[] = {
+//    {"foo", (DL_FUNC) &foo, 4, foo_t},
+//    {"bar_sym", (DL_FUNC) &bar, 0},
+   {NULL, NULL, 0, NULL}
+};
+
+static const R_CallMethodDef callMethods[] = {
+   {"mmap_library", (DL_FUNC) &mmap_library, 2},
+   {"remap_library", (DL_FUNC) &remap_library, 2},
+  {"close_library",  (DL_FUNC) &close_library, 1},
+  {"find_directory_entries",  (DL_FUNC) &find_directory_entries, 2},
+  {"get_directory",  (DL_FUNC) &get_directory, 1},
+  {"read_metadata",  (DL_FUNC) &read_metadata, 2},
+  {"read_lengths",  (DL_FUNC) &read_lengths, 2},
+  {"compute_vector_stats",  (DL_FUNC) &compute_vector_stats, 2},
+  {"read_types",  (DL_FUNC) &read_types, 2},
+  {"get_vector_data_ptr",  (DL_FUNC) &get_vector_data_ptr, 2},
+  {"read_vectors_raw",  (DL_FUNC) &read_vectors_raw, 2},
+  {"read_vectors_idx_raw",  (DL_FUNC) &read_vectors_idx_raw, 3},
+  {"read_vectors_idx_raw_real",  (DL_FUNC) &read_vectors_idx_raw_real, 3},
+  {"read_vectors_idx_raw2",  (DL_FUNC) &read_vectors_idx_raw2, 3},
+  {"read_vectors",  (DL_FUNC) &read_vectors, 2},
+  {"read_vectors_idx",  (DL_FUNC) &read_vectors_idx, 3},
+  {"read_vectors_idx_real",  (DL_FUNC) &read_vectors_idx_real, 3},
+  {"read_vectors_idx2",  (DL_FUNC) &read_vectors_idx2, 3},
+  {"read_vectors_idx3",  (DL_FUNC) &read_vectors_idx3, 3},
+  {"add_directory_entries",  (DL_FUNC) &add_directory_entries, 3},
+  {"write_vector",  (DL_FUNC) &write_vector, 4},
+  {"start_write_vector",  (DL_FUNC) &start_write_vector, 5},
+  {"rewrite_vector",  (DL_FUNC) &rewrite_vector, 3},
+  {"fused_write_vector",  (DL_FUNC) &fused_write_vector, 4},
+  {"order_vectors",  (DL_FUNC) &order_vectors, 3},
+  {"hash_vectors",  (DL_FUNC) &hash_vectors, 2},
+  {"write_hash_vectors",  (DL_FUNC) &write_hash_vectors, 2},
+  {"find_matches",  (DL_FUNC) &find_matches, 4},
+  {"indexed_copy_vector",  (DL_FUNC) &indexed_copy_vector, 4},
+  {"mvl_xlength_int",  (DL_FUNC) &mvl_xlength_int, 1},
+  {"group_vectors",  (DL_FUNC) &group_vectors, 2},
+  {"group_lapply",  (DL_FUNC) &group_lapply, 4},
+  {"write_groups",  (DL_FUNC) &write_groups, 2},
+  {"get_groups",  (DL_FUNC) &get_groups, 2},
+  {"write_spatial_groups",  (DL_FUNC) &write_spatial_groups, 3},
+  {"get_neighbors",  (DL_FUNC) &get_neighbors, 2},
+  {"neighbors_lapply",  (DL_FUNC) &neighbors_lapply, 4},
+  {"write_extent_index",  (DL_FUNC) &write_extent_index, 2},
+  {"compute_repeats",  (DL_FUNC) &compute_repeats, 1},
+  {"extent_index_lapply",  (DL_FUNC) &extent_index_lapply, 4},
+  {"extent_index_scan",  (DL_FUNC) &extent_index_scan, 3},
+   {NULL, NULL, 0}
+};
+
+
+
 void R_init_RMVL(DllInfo *info) {
-  R_RegisterCCallable("RMVL", "mmap_library",  (DL_FUNC) &mmap_library);
-  R_RegisterCCallable("RMVL", "remap_library",  (DL_FUNC) &remap_library);
-  R_RegisterCCallable("RMVL", "close_library",  (DL_FUNC) &close_library);
-  R_RegisterCCallable("RMVL", "find_directory_entries",  (DL_FUNC) &find_directory_entries);
-  R_RegisterCCallable("RMVL", "get_directory",  (DL_FUNC) &get_directory);
-  R_RegisterCCallable("RMVL", "read_metadata",  (DL_FUNC) &read_metadata);
-  R_RegisterCCallable("RMVL", "read_lengths",  (DL_FUNC) &read_lengths);
-  R_RegisterCCallable("RMVL", "read_types",  (DL_FUNC) &read_types);
-  R_RegisterCCallable("RMVL", "get_vector_data_ptr",  (DL_FUNC) &get_vector_data_ptr);
-  R_RegisterCCallable("RMVL", "read_vectors_raw",  (DL_FUNC) &read_vectors_raw);
-  R_RegisterCCallable("RMVL", "read_vectors_idx_raw",  (DL_FUNC) &read_vectors_idx_raw);
-  R_RegisterCCallable("RMVL", "read_vectors_idx_raw_real",  (DL_FUNC) &read_vectors_idx_raw_real);
-  R_RegisterCCallable("RMVL", "read_vectors_idx_raw2",  (DL_FUNC) &read_vectors_idx_raw2);
-  R_RegisterCCallable("RMVL", "read_vectors",  (DL_FUNC) &read_vectors);
-  R_RegisterCCallable("RMVL", "read_vectors_idx",  (DL_FUNC) &read_vectors_idx);
-  R_RegisterCCallable("RMVL", "read_vectors_idx_real",  (DL_FUNC) &read_vectors_idx_real);
-  R_RegisterCCallable("RMVL", "read_vectors_idx2",  (DL_FUNC) &read_vectors_idx2);
-  R_RegisterCCallable("RMVL", "read_vectors_idx3",  (DL_FUNC) &read_vectors_idx3);
-  R_RegisterCCallable("RMVL", "add_directory_entries",  (DL_FUNC) &add_directory_entries);
-  R_RegisterCCallable("RMVL", "write_vector",  (DL_FUNC) &write_vector);
-  R_RegisterCCallable("RMVL", "fused_write_vector",  (DL_FUNC) &fused_write_vector);
-  R_RegisterCCallable("RMVL", "order_vectors",  (DL_FUNC) &order_vectors);
-  R_RegisterCCallable("RMVL", "hash_vectors",  (DL_FUNC) &hash_vectors);
-  R_RegisterCCallable("RMVL", "write_hash_vectors",  (DL_FUNC) &write_hash_vectors);
-  R_RegisterCCallable("RMVL", "find_matches",  (DL_FUNC) &find_matches);
-  R_RegisterCCallable("RMVL", "indexed_copy_vector",  (DL_FUNC) &indexed_copy_vector);
-  R_RegisterCCallable("RMVL", "mvl_xlength",  (DL_FUNC) &mvl_xlength);
-  R_RegisterCCallable("RMVL", "group_vectors",  (DL_FUNC) &group_vectors);
-  R_RegisterCCallable("RMVL", "group_lapply",  (DL_FUNC) &group_lapply);
-  R_RegisterCCallable("RMVL", "write_groups",  (DL_FUNC) &write_groups);
-  R_RegisterCCallable("RMVL", "get_groups",  (DL_FUNC) &get_groups);
-  R_RegisterCCallable("RMVL", "write_spatial_groups",  (DL_FUNC) &write_spatial_groups);
-  R_RegisterCCallable("RMVL", "get_neighbors",  (DL_FUNC) &get_neighbors);
-  R_RegisterCCallable("RMVL", "neighbors_lapply",  (DL_FUNC) &neighbors_lapply);
+
+  R_registerRoutines(info, cMethods, callMethods, NULL, NULL);
+  R_useDynamicSymbols(info, FALSE);
+
 }

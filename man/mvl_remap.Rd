@@ -15,12 +15,13 @@ mvl_remap(MVLHANDLE, append = TRUE)
 handle to MVL file, with updated directory.
 }
 \description{
-This function operates on MVL files opened for writing. The mapping is enlarged to include recently written data, so it can be used in subsequent calls.
-The MVL file directory is updated to include recently added entries.  Old handles can still be used, but will not include updated directory information.
+This function operates on MVL files opened for writing. When writing new data to the MVL file that data is appended at the end and past the end of previously mapped data. 
+Calling \code{mvl_remap()} updates the memory mapping to include all the data written before mvl_remap() was called.
+The MVL file directory is also updated to include recently added entries.  Old handles can still be used, but will not include updated directory information.
 MVL_OBJECT's previously obtained from this handle continue to be valid.
 }
 \details{
-\code{mvl_open} returns a handle with updated directory.
+\code{mvl_remap} returns a handle with updated directory.
 }
 \examples{
 \dontrun{

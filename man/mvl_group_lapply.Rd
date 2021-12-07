@@ -15,7 +15,7 @@ mvl_group_lapply(G, fn)
 a list of results of function \code{fn}
 }
 \description{
-Iteratively call function \code{fn} over index stretches previously computed with \code{mvl_group}
+Iteratively call function \code{fn(idx)} over index stretches previously computed with \code{mvl_group}
 }
 \examples{
 \dontrun{

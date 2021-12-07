@@ -9,9 +9,9 @@ mvl_indexed_copy(MVLHANDLE, x, indices, name = NULL, only.columns = NULL)
 \arguments{
 \item{MVLHANDLE}{a handle to MVL file produced by mvl_open()}
 
-\item{x}{a suitable R object (vector, array, list, data.frame) or a vector-like MVL_OBJECT}
+\item{x}{a vector-like MVL_OBJECT or a data.frame stored in MVL file}
 
-\item{indices}{list of indices into x}
+\item{indices}{a vector of indices into x}
 
 \item{name}{if specified add a named entry to MVL file directory}
 
@@ -21,7 +21,9 @@ mvl_indexed_copy(MVLHANDLE, x, indices, name = NULL, only.columns = NULL)
 an object of class MVL_OFFSET that describes an offset into this MVL file. MVL offsets are vectors and can be concatenated. They can be written to MVL file directly, or as part of another object such as list.
 }
 \description{
-Index copy vector
+This function creates new MVL vectors and data frames by copying only rows or values specified by given indices. 
+The vector indices can be an R integer or numeric vector, a logical vector of the size matching to the object being copied, 
+or a suitable vector stored in MVL file.
 }
 \examples{
 \dontrun{

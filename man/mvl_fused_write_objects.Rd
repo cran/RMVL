@@ -2,7 +2,7 @@
 % Please edit documentation in R/RMVL.R
 \name{mvl_fused_write_objects}
 \alias{mvl_fused_write_objects}
-\title{Write concatenated R objects and write result into MVL file.}
+\title{Concatenate objects and write result into MVL file.}
 \usage{
 mvl_fused_write_objects(MVLHANDLE, L, name = NULL, drop.rownames = TRUE)
 }
