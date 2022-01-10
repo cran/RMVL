@@ -51,8 +51,8 @@ Loading required package: RMVL
 > flatten<-function(L) {
 + 	return(lapply(L, function(x) { 
 + 		if(!inherits(x, "MVL_OBJECT"))return(x)
-+ 		if(!is.null(unclass(x)$metadata) && !is.null(unclass(x)$metadata$class) && any(unclass(x)$metadata$class=="data.frame"))return(x[,])
-+ 		return(x[]) 
++ 		if(mvl_inherits(x, "data.frame"))return(x[,])
++ 		return(x[])
 + 		}))
 + 	}
 > 
@@ -101,4 +101,4 @@ Loading required package: RMVL
 > 
 > proc.time()
    user  system elapsed 
-  0.186   0.027   0.201 
+  0.149   0.024   0.164 

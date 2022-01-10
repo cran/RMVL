@@ -66,6 +66,7 @@ extern "C" {
 #define LIBMVL_VECTOR_POSTAMBLE2 1001		/* New format using named list */
 
 
+
 /*! @brief Return the element size in bytes for a particular MVL type
  *  @param type MVL type, such LIBMVL_VECTOR_FLOAT
  *  @return size in bytes
@@ -206,7 +207,7 @@ typedef struct {
 	long size;
 	long free;
 	LIBMVL_OFFSET64 *offset;
-	char **tag;
+	unsigned char **tag;
 	long *tag_length;
 	
 	/* Optional hash table */
@@ -304,7 +305,7 @@ LIBMVL_OFFSET64 mvl_write_cached_string(LIBMVL_CONTEXT *ctx, long length, const 
 /* Create a packed list of strings 
  * str_size can be either NULL or provide string length, some of which can be -1 
  */
-LIBMVL_OFFSET64 mvl_write_packed_list(LIBMVL_CONTEXT *ctx, long count, const long *str_size, char **str, LIBMVL_OFFSET64 metadata);
+LIBMVL_OFFSET64 mvl_write_packed_list(LIBMVL_CONTEXT *ctx, long count, const long *str_size, unsigned char **str, LIBMVL_OFFSET64 metadata);
 
 /* This is convenient for writing several values of the same type as vector without allocating a temporary array.
  * This function creates the array internally using alloca().
@@ -631,6 +632,39 @@ vec=(LIBMVL_VECTOR *)&(((char *)data)[ofs]);
 return(mvl_as_offset(vec, idx));
 }
 
+/*! @brief It is convenient to be able to mark strings as missing value, similar to NaN for floating point type. 
+ *  In MVL this is done with the special string of length 4 consisting of two NUL characters followed by letters "NA"
+ *
+ */
+
+#define MVL_NA_STRING "\000\000NA"
+#define MVL_NA_STRING_LENGTH	4
+
+static inline int mvl_string_is_na(const char *s, LIBMVL_OFFSET64 len)
+{
+if(len!=4)return 0;
+if((s[0]==0 && s[1]==0 && s[2]=='N' && s[3]=='A'))return 1;
+return(0);
+}
+
+/*! @brief Check whether packed list entry is a special string that indicates a missing value
+ * @param vec a pointer to LIBMVL_VECTOR  with type LIBMVL_PACKED_LIST64
+ * @param data a pointer to beginning of  memory mapped MVL file
+ * @param idx entry index
+ * @return 1 if the entry is NA - a missing value, 0 otherwise
+ */
+static inline int mvl_packed_list_is_na(const LIBMVL_VECTOR *vec, const void *data, LIBMVL_OFFSET64 idx)
+{
+LIBMVL_OFFSET64 start, stop, len;
+if(mvl_vector_type(vec)!=LIBMVL_PACKED_LIST64)return 1;
+len=mvl_vector_length(vec);
+if((idx+1>=len) || (idx<0))return 1;
+start=mvl_vector_data_offset(vec)[idx];
+stop=mvl_vector_data_offset(vec)[idx+1];
+return(mvl_string_is_na(&(((const char *)(data))[start]), stop-start));
+}
+
+
 /*! @brief Get length in bytes of string element idx from a packed list
  * @param vec a pointer to LIBMVL_VECTOR  with type LIBMVL_PACKED_LIST64
  * @param idx entry index
@@ -654,14 +688,14 @@ return(stop-start);
  * @param idx entry index 
  * @return a pointer to the beginning of the data. 
  */
-static inline const char * mvl_packed_list_get_entry(const LIBMVL_VECTOR *vec, const void *data, LIBMVL_OFFSET64 idx)
+static inline const unsigned char * mvl_packed_list_get_entry(const LIBMVL_VECTOR *vec, const void *data, LIBMVL_OFFSET64 idx)
 {
 LIBMVL_OFFSET64 start, len;
 if(mvl_vector_type(vec)!=LIBMVL_PACKED_LIST64)return NULL;
 len=mvl_vector_length(vec);
 if((idx+1>=len) || (idx<0))return NULL;
 start=mvl_vector_data_offset(vec)[idx];
-return(&(((const char *)(data))[start]));
+return(&(((const unsigned char *)(data))[start]));
 }
 
 LIBMVL_OFFSET64 mvl_find_directory_entry(LIBMVL_CONTEXT *ctx, const char *tag);

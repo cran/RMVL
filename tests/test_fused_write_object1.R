@@ -33,7 +33,7 @@ M1<-mvl_open("test1b.mvl", append=TRUE, create=TRUE)
 flatten<-function(L) {
 	return(lapply(L, function(x) { 
 		if(!inherits(x, "MVL_OBJECT"))return(x)
-		if(!is.null(unclass(x)$metadata) && !is.null(unclass(x)$metadata$class) && any(unclass(x)$metadata$class=="data.frame"))return(x[,])
+		if(mvl_inherits(x, "data.frame"))return(x[,])
 		return(x[])
 		}))
 	}

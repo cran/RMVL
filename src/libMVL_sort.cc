@@ -100,7 +100,7 @@ static void sort_indices_packed_list64_asc(LIBMVL_OFFSET64 start, LIBMVL_OFFSET6
 {
 std::sort(indices+start, indices+stop, [vec, data](LIBMVL_OFFSET64 i1, LIBMVL_OFFSET64 i2) { 
 	LIBMVL_OFFSET64 al, bl, nn;
-	const char *ad, *bd;
+	const unsigned char *ad, *bd;
 	al=mvl_packed_list_get_entry_bytelength(vec, i1);
 	bl=mvl_packed_list_get_entry_bytelength(vec, i2);
 	ad=mvl_packed_list_get_entry(vec, data, i1);
@@ -119,7 +119,7 @@ static void sort_indices_packed_list64_desc(LIBMVL_OFFSET64 start, LIBMVL_OFFSET
 {
 std::sort(indices+start, indices+stop, [vec, data](LIBMVL_OFFSET64 i1, LIBMVL_OFFSET64 i2) { 
 	LIBMVL_OFFSET64 al, bl, nn;
-	const char *ad, *bd;
+	const unsigned char *ad, *bd;
 	al=mvl_packed_list_get_entry_bytelength(vec, i1);
 	bl=mvl_packed_list_get_entry_bytelength(vec, i2);
 	ad=mvl_packed_list_get_entry(vec, data, i1);
@@ -324,7 +324,7 @@ switch(mvl_vector_type(vec)) {
 static inline int mvl_packed64_equal(LIBMVL_VECTOR *vec, void *data, LIBMVL_OFFSET64 i1, LIBMVL_OFFSET64 i2)
 {
 LIBMVL_OFFSET64 al, bl;
-const char *ad, *bd;
+const unsigned char *ad, *bd;
 al=mvl_packed_list_get_entry_bytelength(vec, i1);
 bl=mvl_packed_list_get_entry_bytelength(vec, i2);
 if(al!=bl) {
