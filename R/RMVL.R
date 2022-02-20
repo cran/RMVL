@@ -135,6 +135,17 @@ mvl_xlength<-function(x) {
 	return(.Call(mvl_xlength_int, x))
 	}
 	
+	
+#' Return status of MVL package
+#'
+#' @return list of status values
+#' @export
+mvl_status<-function() {
+	L<-.Call(get_status)
+	L[["mvl_small_length"]]<-MVL_SMALL_LENGTH
+	return(L)
+	}
+	
 mvl_write_vector<-function(MVLHANDLE, x, metadata.offset=NULL) {
 	if(!inherits(MVLHANDLE, "MVL")) stop("not an MVL object")
 	if(!is.null(metadata.offset) && !inherits(metadata.offset, "MVL_OFFSET"))stop("not an MVL offset")
@@ -1099,7 +1110,7 @@ mvl_fused_write_objects<-function(MVLHANDLE, L, name=NULL, drop.rownames=TRUE) {
 		}
 	
 	
-	if(any(cl %in% c("numeric", "character", "integer", "factor", "raw", "array", "matrix"))) {
+	if(any(cl %in% c("numeric", "character", "integer", "factor", "raw", "array", "matrix", "logical", "Date"))) {
 		dims_new<-dim(L[[1]])
 		if(!is.null(dims_new)) {
 			if(length(dims_new)>1) {
@@ -1140,7 +1151,7 @@ mvl_fused_write_objects<-function(MVLHANDLE, L, name=NULL, drop.rownames=TRUE) {
 		if(!is.null(name))mvl_add_directory_entries(MVLHANDLE, name, offset)
 		return(invisible(offset))
 		}
-	stop("Could not perform fused write of ", length(L), " objects")
+	stop("Could not perform fused write of ", length(L), " objects with class ", paste(cl, collapse=" "))
 	}
 	
 mvl_flatten_string<-function(v) {
@@ -1699,6 +1710,7 @@ mvl2R<-function(obj, raw=FALSE) {
 				return(vec)
 				}
 			} else {
+			stop("Too many indices")
 			}
 		stop("Cannot process ", obj)
 		}
@@ -1716,7 +1728,7 @@ print.MVL_INDEX<-function(obj, ...) {
 	index_type<-obj["index_type"]
 	if(index_type==1) {
 		vec_types<-mvl2R(obj["vec_types"])
-		cat("MVL_INDEX(extent index using ", length(vec_types), " column",ifelse(length(vec_types)>1, "s", ""),": ", paste(mvl_type_name(vec_types), collapse=","), ")\n", sep="")
+		cat("MVL_INDEX(extent index using ", length(vec_types), " column",ifelse(length(vec_types)>1, "s", ""),": ", paste(unlist(lapply(vec_types, mvl_type_name)), collapse=","), ")\n", sep="")
 		return(invisible(obj))
 		}
 	if(index_type==2) {
@@ -1724,6 +1736,8 @@ print.MVL_INDEX<-function(obj, ...) {
 		cat("MVL_INDEX(spatial_index1 using ", length(vec_bits), " column",ifelse(length(vec_bits)>1, "s", ""),")\n", sep="")
 		return(invisible(obj))
 		}
+	cat("MVL_INDEX(unknown index type)\n")
+	return(invisible(obj))
 	}
 	
 #' Apply function to indices of nearby rows

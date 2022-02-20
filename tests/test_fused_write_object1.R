@@ -17,6 +17,9 @@ mvl_fused_write_objects(M1, L4, "L4")
 L5<-list(data.frame(x=1:10, b=paste("test", 10:1)), data.frame(x=5:2, b=paste("test", 2:5)))
 mvl_fused_write_objects(M1, L5, "L5")
 
+L7<-list(runif(10)>0.5, rnorm(12)>0.5)
+mvl_fused_write_objects(M1, L7, "L7")
+
 mvl_close(M1)
 
 M2<-mvl_open("test1.mvl")
@@ -26,6 +29,7 @@ if(any(do.call(c, L2)!=M2$L2))cat("L2 error 1\n")
 if(any(do.call(c, L3)!=M2$L3))cat("L3 error 1\n")
 if(any(do.call(cbind, L4)!=M2$L4))cat("L4 error 1\n")
 if(any(do.call(rbind, L5)!=M2$L5[,]))cat("L5 error 1\n")
+if(any(do.call(c, L7)!=M2$L7))cat("L7 error 1\n")
 
 
 M1<-mvl_open("test1b.mvl", append=TRUE, create=TRUE)
@@ -56,6 +60,9 @@ mvl_fused_write_objects(M1, L5, "L5")
 L6<-list(M2["L5", ref=TRUE], data.frame(x=1:9, b=paste("test", 9:1)), M2["L5", ref=TRUE], data.frame(x=4:2, b=paste("test", 2:4)))
 mvl_fused_write_objects(M1, L6, "L6")
 
+L7<-list(runif(10)>0.5, M2["L7", ref=TRUE], rnorm(12)>0.5)
+mvl_fused_write_objects(M1, L7, "L7")
+
 mvl_write_object(M1, M2["L4", ref=TRUE], "L4copy")
 
 mvl_close(M1)
@@ -68,6 +75,7 @@ if(any(do.call(c, flatten(L3))!=M1$L3))cat("L3 error 2\n")
 if(any(do.call(cbind, flatten(L4))!=M1$L4))cat("L4 error 2\n")
 if(any(do.call(rbind, flatten(L5))!=M1$L5[,]))cat("L5 error 2\n")
 if(any(do.call(rbind, flatten(L6))!=M1$L6[,]))cat("L6 error 2\n")
+if(any(do.call(c, flatten(L7))!=M1$L7))cat("L7 error 2\n")
 
 if(any(M2$L4[,]!=M1$L4copy[,]))cat("L4copy error 2\n")
 

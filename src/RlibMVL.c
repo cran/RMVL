@@ -494,7 +494,7 @@ switch(TYPEOF(indices)) {
 			return(-5);
 			}
 		for(LIBMVL_OFFSET64 m=0, k=0;m<N;m++)
-			if(pi[m]) {
+			if(pi[m] && (pi[m]!=NA_LOGICAL)) {
 				v_idx[k]=m;
 				k++;
 				}
@@ -522,6 +522,92 @@ switch(TYPEOF(indices)) {
 return(0);
 }
 
+SEXP get_status(void)
+{
+int max_N=20;
+int idx=0, idx2, n_open;
+int j;
+SEXP names, ans, data;
+	
+names=PROTECT(allocVector(STRSXP, max_N));
+ans=PROTECT(allocVector(VECSXP, max_N));
+
+#define add_status(name, val)   {\
+	if(idx<max_N) { \
+		SET_STRING_ELT(names, idx, mkChar(name)); \
+		SET_VECTOR_ELT(ans, idx, (val)); \
+		idx++; \
+		} else { \
+		Rprintf("*** MVL_INTERNAL_ERROR: too many status fields\n"); \
+		} \
+	}
+
+add_status("size_t_bytes", ScalarInteger(sizeof(size_t)));
+add_status("off_t_bytes", ScalarInteger(sizeof(off_t)));
+add_status("long_bytes", ScalarInteger(sizeof(long)));
+add_status("offset64_bytes", ScalarInteger(sizeof(LIBMVL_OFFSET64)));
+add_status("vector_header_bytes", ScalarInteger(sizeof(LIBMVL_VECTOR_HEADER)));
+
+n_open=0;
+for(j=0;j<libraries_free;j++)
+	if(libraries[j].ctx!=NULL)n_open++;
+	
+add_status("open_libraries", ScalarInteger(n_open));
+	
+data=PROTECT(allocVector(INTSXP, n_open));
+idx2=0;
+for(j=0;j<libraries_free;j++)
+	if(libraries[j].ctx!=NULL) {
+		INTEGER(data)[idx2]=j;
+		idx2++;
+		}
+		
+add_status("library_handles", data);
+UNPROTECT(1);
+
+data=PROTECT(allocVector(INTSXP, n_open));
+idx2=0;
+for(j=0;j<libraries_free;j++)
+	if(libraries[j].ctx!=NULL) {
+		INTEGER(data)[idx2]=libraries[j].ctx->flags;
+		idx2++;
+		}
+		
+add_status("library_flags", data);
+UNPROTECT(1);
+
+data=PROTECT(allocVector(LGLSXP, n_open));
+idx2=0;
+for(j=0;j<libraries_free;j++)
+	if(libraries[j].ctx!=NULL) {
+		LOGICAL(data)[idx2]=libraries[j].modified;
+		idx2++;
+		}
+		
+add_status("library_modified", data);
+UNPROTECT(1);
+
+data=PROTECT(allocVector(REALSXP, n_open));
+idx2=0;
+for(j=0;j<libraries_free;j++)
+	if(libraries[j].ctx!=NULL) {
+		REAL(data)[idx2]=libraries[j].length;
+		idx2++;
+		}
+		
+add_status("library_length", data);
+UNPROTECT(1);
+
+#undef add_status
+if(idx<max_N) {
+	SETLENGTH(names, idx);
+	SETLENGTH(ans, idx);
+	}
+
+setAttrib(ans, R_NamesSymbol, names);
+UNPROTECT(2);
+return(ans);
+}
 
 SEXP find_directory_entries(SEXP idx0, SEXP tag)
 {
@@ -2002,7 +2088,7 @@ for(i=0;i<xlength(offsets);i++) {
 			N=0;
 			int *pi=LOGICAL(indicies);
 			for(LIBMVL_OFFSET64 j=0;j<xlength(indicies);j++)
-				if(pi[j])N++;
+				if(pi[j] && (pi[j]!=NA_LOGICAL))N++;
 			break; 
 			}
 		case NILSXP: { 
@@ -2102,9 +2188,9 @@ for(i=0;i<xlength(offsets);i++) {
 			break; \
 			} \
 		case LGLSXP: { \
-			int * restrict pi=LOGICAL(indicies); \
+			int * restrict pidx=LOGICAL(indicies); \
 			for(LIBMVL_OFFSET64 j0=0,j=0;j0<xlength(indicies);j0++) \
-				if(pi[j0]) { \
+				if(pidx[j0] && (pidx[j0]!=NA_LOGICAL)) { \
 					line; \
 					j++; \
 					} else { \
@@ -2629,6 +2715,19 @@ switch(type) {
 				offset=mvl_start_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, expected_length, xlength(data), bdata, *moffset);
 				free(bdata);
 				break;
+			case LGLSXP:
+				bdata=calloc(xlength(data), 1);
+				if(bdata==NULL) {
+					error("Out of memory");
+					return(R_NilValue);
+					}
+				int *ld=LOGICAL(data);
+				for(i=0;i<xlength(data);i++) {
+					bdata[i]=ld[i]==NA_LOGICAL ? 255 : ld[i];
+					}
+				offset=mvl_start_write_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, expected_length, xlength(data), bdata, *moffset);
+				free(bdata);
+				break;
 			case REALSXP:
 				bdata=calloc(xlength(data), 1);
 				if(bdata==NULL) {
@@ -2864,6 +2963,19 @@ switch(type) {
 					}
 				int *id=INTEGER(data);
 				for(i=0;i<xlength(data);i++)bdata[i]=id[i];
+				mvl_rewrite_vector(libraries[idx].ctx, type, data_offset, chunk_offset, xlength(data), bdata);
+				free(bdata);
+				break;
+			case LGLSXP:
+				bdata=calloc(xlength(data), 1);
+				if(bdata==NULL) {
+					error("Out of memory");
+					return(R_NilValue);
+					}
+				int *ld=LOGICAL(data);
+				for(i=0;i<xlength(data);i++) {
+					bdata[i]=ld[i]==NA_LOGICAL ? 255 : ld[i];
+					}
 				mvl_rewrite_vector(libraries[idx].ctx, type, data_offset, chunk_offset, xlength(data), bdata);
 				free(bdata);
 				break;
@@ -3234,7 +3346,28 @@ for(k=0;k<xlength(data_list);k++) {
 	
 	switch(type) {
 		case LIBMVL_VECTOR_UINT8:
-			mvl_rewrite_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, offset, vec_idx, xlength(data), RAW(data));
+			switch(TYPEOF(data)) {
+				case RAWSXP:
+					mvl_rewrite_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, offset, vec_idx, xlength(data), RAW(data));
+					break;
+				case LGLSXP:
+					pc=malloc(xlength(data));
+					if(pc==NULL) {
+						error("Out of memory");
+						return(R_NilValue);
+						}
+					int *ld=LOGICAL(data);
+					for(i=0;i<xlength(data);i++) {
+						pc[i]=ld[i]==NA_LOGICAL ? 255 : ld[i];
+						}
+					mvl_rewrite_vector(libraries[idx].ctx, LIBMVL_VECTOR_UINT8, offset, vec_idx, xlength(data), pc);
+					free(pc);
+					break;
+				default:
+					error("Cannot convert data with type=%d to raw vector", TYPEOF(data));
+					return(R_NilValue);
+					break;
+				}
 			vec_idx+=xlength(data);
 			break;
 		case LIBMVL_VECTOR_INT32:
@@ -6085,6 +6218,7 @@ static const R_CallMethodDef callMethods[] = {
   {"compute_repeats",  (DL_FUNC) &compute_repeats, 1},
   {"extent_index_lapply",  (DL_FUNC) &extent_index_lapply, 4},
   {"extent_index_scan",  (DL_FUNC) &extent_index_scan, 3},
+  {"get_status",  (DL_FUNC) &get_status, 0},
    {NULL, NULL, 0}
 };
 
