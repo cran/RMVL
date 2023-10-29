@@ -11,7 +11,7 @@ mvl_extent_index_lapply(extent_index, data_list, fn)
 
 \item{data_list}{a list of vectors of equal length. They can be MVL_OBJECTs or R vectors. If missing, scan the entire table one hash at a time.}
 
-\item{fn}{a function of one argument - list of indices}
+\item{fn}{a function of two arguments - and index into \code{data_list} and a corresponding list of indices}
 }
 \value{
 a list of results of function \code{fn}

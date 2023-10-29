@@ -22,5 +22,7 @@ Stored object
 }
 \description{
 Retrieve objects stored in mappable vector library
+}
+\details{
 See \code{mvl_open} for example.
 }

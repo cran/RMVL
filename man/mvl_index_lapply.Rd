@@ -11,7 +11,7 @@ mvl_index_lapply(index, data_list, fn)
 
 \item{data_list}{a list of vectors of equal length. They can be MVL_OBJECTs or R vectors, or a data.fame.}
 
-\item{fn}{a function of one argument - list of indices}
+\item{fn}{a function of two arguments - and index into \code{data_list} and a corresponding list of indices}
 }
 \value{
 a list of results of function \code{fn}
@@ -21,9 +21,11 @@ This function is passed the index computed by \code{mvl_write_spatial_index1} or
 For each row we retrieve that set of indices that matches it and call function fn(i, idx) with index i of row being processed and vector idx listing matched indices.
 }
 \details{
-The notion of "matched index" is specific to type of index being used:
-* for an index created with \code{mvl_write_spatial_index1} we return the indices of nearby rows. The user should apply an additional cut to narrow down to actual indices needed.
-* for an index created with \code{mvl_write_extent_index} we return the indices of rows with identical hashes. Even though 64-bit hashes produce very few collisions, it is recommended to apply additional cut to ensure that only the exactly matching rows are returned.
+The notion of "matched indices" is specific to the type of index being used.
+
+For an index created with \code{mvl_write_spatial_index1} we return the indices of nearby rows. The user should apply an additional cut to narrow down to actual indices needed.
+
+For an index created with \code{mvl_write_extent_index} we return the indices of rows with identical hashes. Even though 64-bit hashes produce very few collisions, it is recommended to apply additional cut to ensure that only the exactly matching rows are returned.
 }
 \examples{
 \dontrun{
@@ -33,7 +35,7 @@ Mtmp<-mvl_remap(Mtmp)
 mvl_write_spatial_index1(Mtmp, list(Mtmp$df1[,"x",ref=TRUE], Mtmp$df1[,"y", ref=TRUE]),
                                                                c(2, 3), "df1_sp_groups")
 Mtmp<-mvl_remap(Mtmp)
-mvl_neighbors_lapply(Mtmp["df1_sp_groups", ref=TRUE], list(c(0.5, 0.6), c(2, 3)),
+mvl_index_lapply(Mtmp["df1_sp_groups", ref=TRUE], list(c(0.5, 0.6), c(2, 3)),
                                            function(i, idx) { return(list(i, idx))})
 }
 }
