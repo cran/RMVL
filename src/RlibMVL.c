@@ -1294,6 +1294,11 @@ UNPROTECT(1);
 return(ans);
 }
 
+static inline LIBMVL_OFFSET64 indexR2c(LIBMVL_OFFSET64 idx, LIBMVL_OFFSET64 idx_default)
+{
+return(idx<1 ? idx_default : idx-1);
+}
+
 /* This function accepts vectors in variety of formats */
 SEXP read_vectors_idx3(SEXP idx0, SEXP offsets, SEXP indicies)
 {
@@ -1402,7 +1407,7 @@ for(i=0;i<xlength(offsets);i++) {
 			switch(mvl_vector_type(vec_idx)) { \
 				case LIBMVL_VECTOR_OFFSET64: \
 					for(LIBMVL_OFFSET64 j=0;j<N;j++) { \
-						LIBMVL_OFFSET64 j0=mvl_vector_data_int64(vec_idx)[j]-1; \
+						LIBMVL_OFFSET64 j0=indexR2c(mvl_vector_data_int64(vec_idx)[j], N0); \
 						if(j0<N0) { \
 							line ;\
 							} else { \
@@ -1412,7 +1417,7 @@ for(i=0;i<xlength(offsets);i++) {
 					break; \
 				case LIBMVL_VECTOR_INT32: \
 					for(LIBMVL_OFFSET64 j=0;j<N;j++) { \
-						LIBMVL_OFFSET64 j0=mvl_vector_data_int32(vec_idx)[j]-1; \
+						LIBMVL_OFFSET64 j0=indexR2c(mvl_vector_data_int32(vec_idx)[j], N0); \
 						if(j0<N0) { \
 							line ;\
 							} else { \
@@ -1422,7 +1427,7 @@ for(i=0;i<xlength(offsets);i++) {
 					break; \
 				case LIBMVL_VECTOR_INT64: \
 					for(LIBMVL_OFFSET64 j=0;j<N;j++) { \
-						LIBMVL_OFFSET64 j0=mvl_vector_data_int64(vec_idx)[j]-1; \
+						LIBMVL_OFFSET64 j0=indexR2c(mvl_vector_data_int64(vec_idx)[j], N0); \
 						if(j0<N0) { \
 							line ;\
 							} else { \
@@ -1433,7 +1438,7 @@ for(i=0;i<xlength(offsets);i++) {
 				case LIBMVL_VECTOR_DOUBLE: \
 					for(LIBMVL_OFFSET64 j=0;j<N;j++) { \
 						double vpidx=mvl_vector_data_double(vec_idx)[j]; \
-						LIBMVL_OFFSET64 j0=isfinite(vpidx) ? (LIBMVL_OFFSET64)(vpidx-1.0) : N0; \
+						LIBMVL_OFFSET64 j0=isfinite(vpidx) ? indexR2c(vpidx, N0) : N0; \
 						if(j0<N0) { \
 							line ;\
 							} else { \
@@ -1443,7 +1448,7 @@ for(i=0;i<xlength(offsets);i++) {
 					break; \
 				case LIBMVL_VECTOR_FLOAT: \
 					for(LIBMVL_OFFSET64 j=0;j<N;j++) { \
-						LIBMVL_OFFSET64 j0=mvl_vector_data_float(vec_idx)[j]-1; \
+						LIBMVL_OFFSET64 j0=indexR2c(mvl_vector_data_float(vec_idx)[j], N0); \
 						if(j0<N0) { \
 							line ;\
 							} else { \
@@ -1460,7 +1465,7 @@ for(i=0;i<xlength(offsets);i++) {
 			double * restrict pidx=REAL(indicies); \
 			for(LIBMVL_OFFSET64 j=0;j<N;j++) { \
 				double vpidx=pidx[j]; \
-				LIBMVL_OFFSET64 j0=isfinite(vpidx) ? (LIBMVL_OFFSET64)(vpidx-1.0) : N0; \
+				LIBMVL_OFFSET64 j0=isfinite(vpidx) ? indexR2c(vpidx, N0) : N0; \
 				if(j0<N0) { \
 					line ;\
 					} else { \
@@ -1472,7 +1477,7 @@ for(i=0;i<xlength(offsets);i++) {
 		case INTSXP: { \
 			int * restrict pidx=INTEGER(indicies); \
 			for(LIBMVL_OFFSET64 j=0;j<N;j++) { \
-				LIBMVL_OFFSET64 j0=pidx[j]-1; \
+				LIBMVL_OFFSET64 j0=indexR2c(pidx[j], N0); \
 				if(j0<N0) { \
 					line ;\
 					} else { \

@@ -1,6 +1,6 @@
 Package: RMVL
 Title: Mappable Vector Library for Handling Large Datasets
-Version: 0.0.4.8
+Version: 0.0.4.9
 Authors@R: 
     person(given = "Vladimir",
            family = "Dergachev",
@@ -11,10 +11,10 @@ Description: Mappable vector library provides convenient way to access large dat
 License: LGPL-2.1
 Depends: R (>= 3.5.0)
 Encoding: UTF-8
-RoxygenNote: 7.1.1
+RoxygenNote: 7.2.3
 NeedsCompilation: yes
-Packaged: 2023-09-22 03:37:57 UTC; volodya
+Packaged: 2023-10-30 11:28:50 UTC; volodya
 Author: Vladimir Dergachev [aut, cre] (<https://orcid.org/0000-0003-4708-6625>)
 Maintainer: Vladimir Dergachev <support@altumrete.com>
 Repository: CRAN
-Date/Publication: 2023-10-29 04:50:02 UTC
+Date/Publication: 2023-10-30 20:00:07 UTC

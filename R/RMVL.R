@@ -131,7 +131,7 @@ mvl_get_vectors<-function(MVLHANDLE, offsets, raw=FALSE) {
 #' @export
 #'
 mvl_xlength<-function(x) {
-	if(inherits(x, "MVL_OBJECT"))return(x[["length"]])
+	if(inherits(x, "MVL_OBJECT"))return(unclass(x)[["length"]])
 	return(.Call(mvl_xlength_int, x))
 	}
 	
@@ -722,7 +722,6 @@ mvl_extent_index_lapply<-function(extent_index, data_list, fn) {
 #'
 mvl_indexed_copy<-function(MVLHANDLE, x, indices, name=NULL, only.columns=NULL) {
 	if(!inherits(MVLHANDLE, "MVL")) stop("not an MVL object")
-	if(!inherits(x, "MVL_OBJECT")) stop("not an MVL object (2)")
 	
 	if(mvl_inherits(x, "data.frame")) {
 		if(is.null(only.columns)) {
@@ -753,9 +752,14 @@ mvl_indexed_copy<-function(MVLHANDLE, x, indices, name=NULL, only.columns=NULL) 
 		if(!is.null(name))mvl_add_directory_entries(MVLHANDLE, name, offset)
 		return(invisible(offset))
 		}
+		
+	if(!inherits(x, "MVL_OBJECT")) {
+		offset<-mvl_write_object(MVLHANDLE, x[mvl2R(indices)], name=name)
+		return(invisible(offset))
+		}
 	
 	cl<-NULL
-	m<-x[["metadata"]]
+	m<-unclass(x)[["metadata"]]
 	if(!is.null(m) && !is.null(m[["class"]]))cl<-m[["class"]]
 	if(!is.null(cl))
 		metadata.offset<-mvl_write_object_metadata(MVLHANDLE, NULL, class.override=cl)

@@ -1,6 +1,6 @@
-1c6a560dd6fcaed572e6dc17aa3b8d07 *DESCRIPTION
+b879f54e5e48843dfb7ad81f57394712 *DESCRIPTION
 0be40c4a7eff40a7e7f5b45861770f31 *NAMESPACE
-33bc80e4895eebb0cc094002dec0f137 *R/RMVL.R
+5c2b561d53e43438a9c1483ecc951e03 *R/RMVL.R
 7ab68c5fa4b05a7f3a4ec714782534d3 *man/cash-.MVL.Rd
 00246a632995405128e9c8a1a9668208 *man/dim.MVL_OBJECT.Rd
 7cb1dc9c15eea8f618fc371ff0dfb511 *man/length.MVL_OBJECT.Rd
@@ -44,7 +44,7 @@ af0b437d0bb44e4be9c0c46743551b79 *man/print.MVL_OBJECT.Rd
 d855f6b0966d3c70797d698faee62449 *man/sub-.MVL_OBJECT.Rd
 dbc2d049b1280df39697805a992802c2 *man/sub-sub-.MVL_OBJECT.Rd
 14368a674e383334881031dd1b589ab7 *src/Makevars
-769a322a507b4c2856f1a2beb9a83e0e *src/RlibMVL.c
+42231ec5f40f01a72a6293af0d5b7caa *src/RlibMVL.c
 ccf1654493db729dad41f224010ce6f8 *src/libMVL.c
 e279dcbf8b82e4d88aace60cf1ee10f1 *src/libMVL.h
 71385e4585e8fdb7d9a35ccd34787d79 *src/libMVL_sort.cc
@@ -62,5 +62,7 @@ bb741ccc0707ac9dd25bab125fb10d51 *tests/test_bracket2.Rout.save
 675f3fb32c5897c8612058d151b5ea4b *tests/test_fused_write_object1.Rout.save
 37bd48b9db02e2d30c122442a66d6ee5 *tests/test_hash.R
 860ca7a3f9aabbc9a1916a6ea6d84805 *tests/test_hash.Rout.save
+53b155c165a92fb76e3e99b430c4c66f *tests/test_indexed_copy.R
+c0868b0a07e908bf63c69af03317a500 *tests/test_indexed_copy.Rout.save
 d64774ab886e08ce1cce994fc215eb6d *tests/test_order1.R
 0483792ef15d3d54970adcc81f91c61a *tests/test_order1.Rout.save
