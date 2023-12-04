@@ -4165,7 +4165,7 @@ Nbits=mvl_vector_length(vec_bits);
 
 if(Nbits!=length(data_list) || length(data_list)==0) {
 	mvl_free_named_list(L);
-	error("Query columns do not match spatial index: %d vs %s", length(data_list), Nbits);
+	error("Query columns do not match spatial index: %d vs %d", length(data_list), Nbits);
 	return(R_NilValue);
 	}
 	
@@ -4394,7 +4394,7 @@ Nbits=mvl_vector_length(vec_bits);
 
 if(Nbits!=length(data_list) || length(data_list)==0) {
 	mvl_free_named_list(L);
-	error("Query columns do not match spatial index: %d vs %s", length(data_list), Nbits);
+	error("Query columns do not match spatial index: %d vs %d", length(data_list), Nbits);
 	return(R_NilValue);
 	}
 	
@@ -5322,7 +5322,7 @@ if((err=mvl_load_extent_index(libraries[index_idx].ctx, libraries[index_idx].dat
 	}
 
 if(xlength(data_list)!=ei.hash_map.vec_count) {
-	error("Number of vectors (columns) does not match - original index used %d vectors", ei.hash_map.vec_count);
+	error("Number of vectors (columns) does not match - original index used %lld vectors", ei.hash_map.vec_count);
 	mvl_free_extent_index_arrays(&ei);
 	return(R_NilValue);
 	}
