@@ -9,60 +9,6 @@
 
 
 template <class Numeric> 
-static void sort_indices_asc1(LIBMVL_OFFSET64 start, LIBMVL_OFFSET64 stop, LIBMVL_OFFSET64 *indices, Numeric *data)
-{
-//std::vector<std::reference_wrapper<LIBMVL_OFFSET64>> indices_pp(indices+start, indices+stop);
-//std::vector<LIBMVL_OFFSET64> indices_pp(indices+start, indices+stop);
-
-std::sort(indices+start, indices+stop, [data](LIBMVL_OFFSET64 i1, LIBMVL_OFFSET64 i2) { return(data[i1]<data[i2]); });
-}
-
-template <class Numeric> 
-static void sort_indices_asc2(LIBMVL_OFFSET64 start, LIBMVL_OFFSET64 stop, LIBMVL_OFFSET64 *indices, Numeric *data)
-{
-std::vector<std::pair<Numeric, LIBMVL_OFFSET64>> indices_pp;
-
-indices_pp.reserve(stop-start);
-for(LIBMVL_OFFSET64 i=start;i<stop;i++) {
-	indices_pp[i-start]=std::make_pair(data[indices[i]], indices[i]); 
-	}
-
-std::sort(indices_pp.begin(), indices_pp.begin()+(stop-start), [](std::pair<Numeric, LIBMVL_OFFSET64> i1, std::pair<Numeric, LIBMVL_OFFSET64> i2) { return (i1.first<i2.first);});
-
-for(LIBMVL_OFFSET64 i=start;i<stop;i++) {
-	indices[i]=indices_pp[i-start].second; 
-	}
-}
-
-// template <class Numeric> 
-// static void sort_indices_asc3(LIBMVL_OFFSET64 start, LIBMVL_OFFSET64 stop, LIBMVL_OFFSET64 *indices, Numeric *data)
-// {
-// std::vector<Numeric> values(data+start, data+stop);
-// 
-// /* TODO : pairs */
-// 
-// std::sort(indices_pp.begin(), indices_pp.begin()+(stop-start), [](std::pair<Numeric, LIBMVL_OFFSET64> i1, std::pair<Numeric, LIBMVL_OFFSET64> i2) { return (i1.first<i2.first);});
-// 
-// }
-
-template <class Numeric> 
-static void sort_indices_asc4(LIBMVL_OFFSET64 start, LIBMVL_OFFSET64 stop, LIBMVL_OFFSET64 *indices, Numeric *data)
-{
-std::vector<std::pair<Numeric, LIBMVL_OFFSET64>> indices_pp;
-
-indices_pp.reserve(stop-start);
-for(LIBMVL_OFFSET64 i=start;i<stop;i++) {
-	indices_pp[i-start]=std::make_pair(data[indices[i]], indices[i]); 
-	}
-
-pdqsort(indices_pp.begin(), indices_pp.begin()+(stop-start), [](std::pair<Numeric, LIBMVL_OFFSET64> i1, std::pair<Numeric, LIBMVL_OFFSET64> i2) { return (i1.first<i2.first);});
-
-for(LIBMVL_OFFSET64 i=start;i<stop;i++) {
-	indices[i]=indices_pp[i-start].second; 
-	}
-}
-
-template <class Numeric> 
 static void sort_indices_asc(LIBMVL_OFFSET64 count, LIBMVL_OFFSET64 *indices, Numeric *data)
 {
 

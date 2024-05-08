@@ -266,6 +266,7 @@ typedef struct {
 #define LIBMVL_ERR_INVALID_PARAMETER	-16
 #define LIBMVL_ERR_INVALID_LENGTH	-17
 #define LIBMVL_ERR_INVALID_EXTENT_INDEX	-18
+#define LIBMVL_ERR_CORRUPT_PACKED_LIST	-19
 	
 LIBMVL_CONTEXT *mvl_create_context(void);
 void mvl_free_context(LIBMVL_CONTEXT *ctx);
@@ -296,7 +297,7 @@ LIBMVL_OFFSET64 mvl_write_concat_vectors(LIBMVL_CONTEXT *ctx, int type, long nve
  * Indices do not have to be distinct
  * max_buffer is the maximum length of internal buffers in bytes (two buffers are needed for LIBMVL_PACKED_LIST64 vectors)
  */
-LIBMVL_OFFSET64 mvl_indexed_copy_vector(LIBMVL_CONTEXT *ctx, LIBMVL_OFFSET64 index_count, const LIBMVL_OFFSET64 *indices, const LIBMVL_VECTOR *vec, const void *data, LIBMVL_OFFSET64 metadata, LIBMVL_OFFSET64 max_buffer);
+LIBMVL_OFFSET64 mvl_indexed_copy_vector(LIBMVL_CONTEXT *ctx, LIBMVL_OFFSET64 index_count, const LIBMVL_OFFSET64 *indices, const LIBMVL_VECTOR *vec, const void *data, LIBMVL_OFFSET64 data_length, LIBMVL_OFFSET64 metadata, LIBMVL_OFFSET64 max_buffer);
 
 
 /* Writes a single C string. In particular, this is handy for providing metadata tags */
@@ -345,7 +346,7 @@ LIBMVL_OFFSET64 mvl_find_list_entry(LIBMVL_NAMED_LIST *L, long tag_length, const
 LIBMVL_OFFSET64 mvl_write_attributes_list(LIBMVL_CONTEXT *ctx, LIBMVL_NAMED_LIST *L);
 
 /* This is meant to operate on memory mapped (or in-memory) files */
-LIBMVL_NAMED_LIST *mvl_read_attributes_list(LIBMVL_CONTEXT *ctx, const void *data, LIBMVL_OFFSET64 metadata_offset);
+LIBMVL_NAMED_LIST *mvl_read_attributes_list(LIBMVL_CONTEXT *ctx, const void *data, LIBMVL_OFFSET64 data_size, LIBMVL_OFFSET64 metadata_offset);
 
 /* Convenience function that create a named list populated with necessary entries
  * It needs writable context to write attribute values */
@@ -370,7 +371,7 @@ LIBMVL_OFFSET64 mvl_write_named_list2(LIBMVL_CONTEXT *ctx, LIBMVL_NAMED_LIST *L,
 LIBMVL_OFFSET64 mvl_write_named_list_as_data_frame(LIBMVL_CONTEXT *ctx, LIBMVL_NAMED_LIST *L, int nrows, LIBMVL_OFFSET64 rownames);
 
 /* This is meant to operate on memory mapped (or in-memory) files */
-LIBMVL_NAMED_LIST *mvl_read_named_list(LIBMVL_CONTEXT *ctx, const void *data, LIBMVL_OFFSET64 offset);
+LIBMVL_NAMED_LIST *mvl_read_named_list(LIBMVL_CONTEXT *ctx, const void *data, LIBMVL_OFFSET64 data_size, LIBMVL_OFFSET64 offset);
 
 void mvl_open(LIBMVL_CONTEXT *ctx, FILE *f);
 void mvl_close(LIBMVL_CONTEXT *ctx);
@@ -384,6 +385,17 @@ void mvl_write_postamble(LIBMVL_CONTEXT *ctx);
 /*! @brief Return number of elements from a pointer to LIBMVL_VECTOR 
  */
 #define mvl_vector_length(data)   (((LIBMVL_VECTOR_HEADER *)(data))->length)
+
+/*! @brief Return number of entries in the vector. Currently this is the same as mvl_vector_length() for all types except LIBMVL_PACKED_LIST64
+ *  @param vec pointer to start of the vector
+ */
+static inline LIBMVL_OFFSET64 mvl_vector_nentries(void *vec)
+{
+LIBMVL_VECTOR_HEADER *vec0=(LIBMVL_VECTOR_HEADER *)vec;
+LIBMVL_OFFSET64 N;
+N=mvl_vector_length(vec0);
+return((mvl_vector_type(vec0)==LIBMVL_PACKED_LIST64) ? N-1 : N);
+}
 
 #if MVL_STATIC_MEMBERS
 /*! @brief Return base data from a pointer to LIBMVL_VECTOR 
@@ -485,6 +497,18 @@ static inline LIBMVL_VECTOR * mvl_vector_from_offset(void *data, LIBMVL_OFFSET64
 return(offset==0 ? NULL : (LIBMVL_VECTOR *)(&(((unsigned char*)data)[offset])));
 }
 
+/*! @brief A convenience function to convert an offset into memory mapped data into a pointer to LIBMVL_VECTOR structure.
+ * 
+ *  This function validates vector structure, but not the contents of the vector.
+ * 
+ *  @param data  pointer to memory mapped MVL file
+ *  @param offset 64-bit offset into MVL file
+ *  @return pointer to LIBMVL_VECTOR structure stored in MVL file
+ */
+static inline LIBMVL_VECTOR * mvl_validated_vector_from_offset(void *data, LIBMVL_OFFSET64 data_size, LIBMVL_OFFSET64 offset)
+{
+return(((offset==0) || (mvl_validate_vector(offset, data, data_size)!=0)) ? NULL : (LIBMVL_VECTOR *)(&(((unsigned char*)data)[offset])));
+}
 
 
 /* These two convenience functions are meant for retrieving a few values, such as stored configuration parameters.
@@ -702,12 +726,32 @@ start=mvl_vector_data_offset(vec)[idx];
 return(&(((const unsigned char *)(data))[start]));
 }
 
+/* Validate packed list entry */
+/*! @brief Get pointer to the start of string element idx from a packed list
+ * @param vec a pointer to LIBMVL_VECTOR with type LIBMVL_PACKED_LIST64
+ * @param data a pointer to beginning of  memory mapped MVL file
+ * @param idx entry index 
+ * @return a pointer to the beginning of the data. 
+ */
+static inline int mvl_packed_list_validate_entry(const LIBMVL_VECTOR *vec, const void *data, LIBMVL_OFFSET64 data_size, LIBMVL_OFFSET64 idx)
+{
+LIBMVL_OFFSET64 start, stop, len;
+if(mvl_vector_type(vec)!=LIBMVL_PACKED_LIST64)return -1;
+len=mvl_vector_length(vec);
+if((idx+1>=len) || (idx<0))return -2;
+start=mvl_vector_data_offset(vec)[idx];
+stop=mvl_vector_data_offset(vec)[idx+1];
+if(start>data_size)return(-3);
+if(stop>data_size)return(-4);
+return(0);
+}
+
 LIBMVL_OFFSET64 mvl_find_directory_entry(LIBMVL_CONTEXT *ctx, const char *tag);
 
 /* This initializes context to use in-memory image of given length starting at data
  * the image could have been loaded via fread, or memory mapped
  */
-void mvl_load_image(LIBMVL_CONTEXT *ctx, LIBMVL_OFFSET64 length, const void *data);
+void mvl_load_image(LIBMVL_CONTEXT *ctx, const void *data, LIBMVL_OFFSET64 length);
 
 
 /*! @def LIBMVL_SORT_LEXICOGRAPHIC
@@ -1002,8 +1046,8 @@ return(x);
  * 
  * Floats and doubles are trickier - we can guarantee that the hash of float promoted to double is the same as the hash of the original float, but not the reverse.
  */
-int mvl_hash_indices(LIBMVL_OFFSET64 indices_count, const LIBMVL_OFFSET64 *indices, LIBMVL_OFFSET64 *hash, LIBMVL_OFFSET64 vec_count, LIBMVL_VECTOR **vec, void **vec_data, int flags);
-int mvl_hash_range(LIBMVL_OFFSET64 i0, LIBMVL_OFFSET64 i1, LIBMVL_OFFSET64 *hash, LIBMVL_OFFSET64 vec_count, LIBMVL_VECTOR **vec, void **vec_data, int flags);
+int mvl_hash_indices(LIBMVL_OFFSET64 indices_count, const LIBMVL_OFFSET64 *indices, LIBMVL_OFFSET64 *hash, LIBMVL_OFFSET64 vec_count, LIBMVL_VECTOR **vec, void **vec_data, LIBMVL_OFFSET64 *vec_data_length, int flags);
+int mvl_hash_range(LIBMVL_OFFSET64 i0, LIBMVL_OFFSET64 i1, LIBMVL_OFFSET64 *hash, LIBMVL_OFFSET64 vec_count, LIBMVL_VECTOR **vec, void **vec_data, LIBMVL_OFFSET64 *vec_data_length, int flags);
 
 /* This structure can either be allocated by libMVL or constructed by the caller 
  * In the latter case read comments describing size constraints 
@@ -1070,14 +1114,14 @@ void mvl_find_first_hashes(LIBMVL_OFFSET64 key_count, const LIBMVL_OFFSET64 *key
  * An auxiliary array key_last of length key_indices_count stores the stop before index (in terms of matches array). 
  * In particular the total number of matches is given by key_last[key_indices_count-1]
  */
-int mvl_find_matches(LIBMVL_OFFSET64 key_indices_count, const LIBMVL_OFFSET64 *key_indices, LIBMVL_OFFSET64 key_vec_count, LIBMVL_VECTOR **key_vec, void **key_vec_data, LIBMVL_OFFSET64 *key_hash,
-			   LIBMVL_OFFSET64 indices_count, const LIBMVL_OFFSET64 *indices, LIBMVL_OFFSET64 vec_count, LIBMVL_VECTOR **vec, void **vec_data, HASH_MAP *hm, 
+int mvl_find_matches(LIBMVL_OFFSET64 key_indices_count, const LIBMVL_OFFSET64 *key_indices, LIBMVL_OFFSET64 key_vec_count, LIBMVL_VECTOR **key_vec, void **key_vec_data, LIBMVL_OFFSET64 *key_vec_data_length, LIBMVL_OFFSET64 *key_hash,
+			   LIBMVL_OFFSET64 indices_count, const LIBMVL_OFFSET64 *indices, LIBMVL_OFFSET64 vec_count, LIBMVL_VECTOR **vec, void **vec_data, LIBMVL_OFFSET64 *vec_data_length, HASH_MAP *hm, 
 			   LIBMVL_OFFSET64 *key_last, LIBMVL_OFFSET64 pairs_size, LIBMVL_OFFSET64 *key_match_indices, LIBMVL_OFFSET64 *match_indices);
 
 /* This function transforms HASH_MAP into a list of groups. 
  * After calling hm->hash_map is invalid, but hm->first and hm->next describe exactly identical rows 
  */
-void mvl_find_groups(LIBMVL_OFFSET64 indices_count, const LIBMVL_OFFSET64 *indices, LIBMVL_OFFSET64 vec_count, LIBMVL_VECTOR **vec, void **vec_data, HASH_MAP *hm);
+void mvl_find_groups(LIBMVL_OFFSET64 indices_count, const LIBMVL_OFFSET64 *indices, LIBMVL_OFFSET64 vec_count, LIBMVL_VECTOR **vec, void **vec_data, LIBMVL_OFFSET64 *vec_data_length, HASH_MAP *hm);
 
 
 /*! @brief List of offsets partitioning the vector. First element is always 0, last element is vector size.
@@ -1092,7 +1136,7 @@ typedef struct {
 
 void mvl_init_partition(LIBMVL_PARTITION *el);
 void mvl_extend_partition(LIBMVL_PARTITION *el, LIBMVL_OFFSET64 nelem);
-void mvl_find_repeats(LIBMVL_PARTITION *partition, LIBMVL_OFFSET64 count, LIBMVL_VECTOR **vec, void **data);
+void mvl_find_repeats(LIBMVL_PARTITION *partition, LIBMVL_OFFSET64 count, LIBMVL_VECTOR **vec, void **data, LIBMVL_OFFSET64 *data_length);
 void mvl_free_partition_arrays(LIBMVL_PARTITION *el);
 
 #ifndef LIBMVL_EXTENT_INLINE_SIZE
@@ -1129,9 +1173,9 @@ typedef struct {
 	
 void mvl_init_extent_index(LIBMVL_EXTENT_INDEX *ei);
 void mvl_free_extent_index_arrays(LIBMVL_EXTENT_INDEX *ei);
-int mvl_compute_extent_index(LIBMVL_EXTENT_INDEX *ei, LIBMVL_OFFSET64 count, LIBMVL_VECTOR **vec, void **data);
+int mvl_compute_extent_index(LIBMVL_EXTENT_INDEX *ei, LIBMVL_OFFSET64 count, LIBMVL_VECTOR **vec, void **data, LIBMVL_OFFSET64 *data_length);
 LIBMVL_OFFSET64 mvl_write_extent_index(LIBMVL_CONTEXT *ctx, LIBMVL_EXTENT_INDEX *ei);
-int mvl_load_extent_index(LIBMVL_CONTEXT *ctx, void *data, LIBMVL_OFFSET64 offset, LIBMVL_EXTENT_INDEX *ei);
+int mvl_load_extent_index(LIBMVL_CONTEXT *ctx, void *data, LIBMVL_OFFSET64 data_size, LIBMVL_OFFSET64 offset, LIBMVL_EXTENT_INDEX *ei);
 
 /*! @brief Alter extent list to contain no extents without freeing memory
  * 

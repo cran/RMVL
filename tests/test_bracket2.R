@@ -137,43 +137,43 @@ if(!isTRUE(all.equal("Example of large data frame", L2[[5]]))) {
 	cat("-----------\n")
 	}
 
-
-if(!isTRUE(all.equal(L[c(2, 3)], L2[c(2,3), recurse=TRUE]))) {
+# We need check.attributes=FALSE because on R 4.1.x there is a mismatch in array attributes - one has class and the other does not
+if(!isTRUE(all.equal(L[c(2, 3)], L2[c(2,3), recurse=TRUE], check.attributes=FALSE))) {
 	cat("test2a failed\n")
-	print(all.equal(L[c(2, 3)], L2[c(2, 3), recurse=TRUE]))
+	print(all.equal(L[c(2, 3)], L2[c(2, 3), recurse=TRUE], check.attributes=FALSE))
 	print(attributes(L[c(2, 3)]))
 	print(attributes(L2[c(2, 3), recurse=TRUE]))
 	cat("-----------\n")
 	}
 
 # Some of the names are NA and all.equal() does not handle this properly
-if(!isTRUE(all.equal.list(L[c(2, NA, 3)], L2[c(2, NA, 3), recurse=TRUE], use.names=FALSE))) {
+if(!isTRUE(all.equal.list(L[c(2, NA, 3)], L2[c(2, NA, 3), recurse=TRUE], use.names=FALSE, check.attributes=FALSE))) {
 	cat("test2b failed\n")
-	print(all.equal.list(L[c(2, NA, 3)], L2[c(2, NA, 3), recurse=TRUE], use.names=FALSE))
+	print(all.equal.list(L[c(2, NA, 3)], L2[c(2, NA, 3), recurse=TRUE], use.names=FALSE, check.attributes=FALSE))
 	print(attributes(L[c(2, NA, 3)]))
 	print(attributes(L2[c(2, NA, 3), recurse=TRUE]))
 	cat("-----------\n")
 	}
 	
-if(!isTRUE(all.equal(L[c("y", "z")], L2[c("y", "z"), recurse=TRUE]))) {
+if(!isTRUE(all.equal(L[c("y", "z")], L2[c("y", "z"), recurse=TRUE], check.attributes=FALSE))) {
 	cat("test2c failed\n")
-	print(all.equal(L[c("y", "z")], L2[c("y", "z"), recurse=TRUE]))
+	print(all.equal(L[c("y", "z")], L2[c("y", "z"), recurse=TRUE], check.attributes=FALSE))
 	print(attributes(L[c("y", "z")]))
 	print(attributes(L2[c("y", "z"), recurse=TRUE]))
 	cat("-----------\n")
 	}
 
-if(!isTRUE(all.equal(L[c("W", "y", "z")], L2[c("W", "y", "z"), recurse=TRUE]))) {
+if(!isTRUE(all.equal(L[c("W", "y", "z")], L2[c("W", "y", "z"), recurse=TRUE], check.attributes=FALSE))) {
 	cat("test2d failed\n")
-	print(all.equal(L[c("W", "y", "z")], L2[c("W", "y", "z"), recurse=TRUE]))
+	print(all.equal(L[c("W", "y", "z")], L2[c("W", "y", "z"), recurse=TRUE], check.attributes=FALSE))
 	print(attributes(L[c("W", "y", "z")]))
 	print(attributes(L2[c("W", "y", "z"), recurse=TRUE]))
 	cat("-----------\n")
 	}
 
-if(!isTRUE(all.equal(L[c("W", "y", NA, "z")], L2[c("W", "y", NA, "z"), recurse=TRUE]))) {
+if(!isTRUE(all.equal(L[c("W", "y", NA, "z")], L2[c("W", "y", NA, "z"), recurse=TRUE], check.attributes=FALSE))) {
 	cat("test2e failed\n")
-	print(all.equal(L[c("W", "y", NA, "z")], L2[c("W", "y", NA, "z"), recurse=TRUE]))
+	print(all.equal(L[c("W", "y", NA, "z")], L2[c("W", "y", NA, "z"), recurse=TRUE], check.attributes=FALSE))
 	print(attributes(L[c("W", "y", NA, "z")]))
 	print(attributes(L2[c("W", "y", NA, "z"), recurse=TRUE]))
 	cat("-----------\n")
