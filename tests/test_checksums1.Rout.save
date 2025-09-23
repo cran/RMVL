@@ -1,0 +1,50 @@
+
+R version 3.6.3 (2020-02-29) -- "Holding the Windsock"
+Copyright (C) 2020 The R Foundation for Statistical Computing
+Platform: x86_64-pc-linux-gnu (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> require("RMVL")
+Loading required package: RMVL
+> 
+> M<-mvl_open("test_checksums1.mvl", append=TRUE, create=TRUE)
+> 
+> mvl_write_object(M, rnorm(10000), "x")
+> mvl_write_object(M, 1:100, "y")
+> mvl_write_object(M, as.character(1:100), "s")
+> mvl_write_object(M, as.list(1:100), "L")
+> mvl_write_object(M, data.frame(i=1:100, x=rnorm(100), s=as.character(1:100)), "df")
+> 
+> M<-mvl_remap(M)
+> 
+> mvl_write_extent_index(M, list(M$df[,"i", ref=TRUE]), "extent_index")
+> 
+> mvl_close(M, checksums=TRUE)
+> 
+> 
+> M<-mvl_open("test_checksums1.mvl")
+> mvl_verify(M)
+> mvl_verify(M["x", ref=TRUE])
+> mvl_verify(M["y", ref=TRUE])
+> mvl_verify(M["s", ref=TRUE])
+> mvl_verify(M["L", ref=TRUE])
+> mvl_verify(M["df", ref=TRUE])
+> mvl_verify(M["extent_index", ref=TRUE])
+> mvl_close(M)
+> 
+> unlink("test_checksums1.mvl")
+> 
+> proc.time()
+   user  system elapsed 
+  0.130   0.013   0.132 

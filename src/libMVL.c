@@ -75,7 +75,15 @@ return(p);
 
 #else
 
+#ifdef __WIN32__
+
+#define off_t  long long int
+
+#else 
+
 #define HAVE_FTELLO
+
+#endif
 
 #endif
 
@@ -84,9 +92,16 @@ off_t do_ftello(FILE *f)
 #ifdef HAVE_FTELLO
 return(ftello(f));
 #else
+
+#ifdef __WIN32__
+fflush(f);
+return(_lseeki64(fileno(f), 0, SEEK_CUR));
+
+#else
 /* ftello() is broken on MacOS >= 10.15 */
 fflush(f);
 return(lseek(fileno(f), 0, SEEK_CUR));
+#endif
 #endif
 }
 
@@ -154,6 +169,8 @@ LIBMVL_CONTEXT *ctx;
 ctx=do_malloc(1, sizeof(*ctx));
 if(ctx==NULL)return(ctx);
 
+memset(ctx, 0, sizeof(*ctx));
+
 ctx->error=0;
 ctx->abort_on_error=1;
 ctx->alignment=32;
@@ -162,6 +179,8 @@ ctx->alignment=32;
 ctx->directory=mvl_create_named_list(100);
 mvl_recompute_named_list_hash(ctx->directory);
 ctx->directory_offset=-1;
+
+ctx->full_checksums_offset=LIBMVL_NULL_OFFSET;
 
 ctx->character_class_offset=0;
 
@@ -251,8 +270,22 @@ switch(ctx->error) {
 		return("invalid length");
 	case LIBMVL_ERR_INVALID_EXTENT_INDEX:
 		return("invalid extent index");
-	case LIBMVL_ERR_CORRUPT_PACKED_LIST:
-		return("corrupt packed list");
+	case LIBMVL_ERR_UNALIGNED_POINTER:
+		return("pointer is not properly aligned");
+	case LIBMVL_ERR_UNALIGNED_OFFSET:
+		return("an offset or size parameter is not properly aligned");
+	case LIBMVL_ERR_INVALID_HEADER:
+		return("invalid or inappropriate vector header");
+	case LIBMVL_ERR_UNKNOWN_CHECKSUM_ALGORITHM:
+		return("unknown checksum algorithm");
+	case LIBMVL_ERR_CHECKSUM_FAILED:
+		return("checksum did not match, corrupt data likely");
+	case LIBMVL_ERR_NO_CHECKSUMS:
+		return("no checksums found, cannot verify");
+	case LIBMVL_ERR_NO_DATA:
+		return("data is NULL and mvl_load_image() has not been called on MVL context");
+	case LIBMVL_ERR_MVL_FILE_TOO_SHORT:
+		return("MVL file length is too short, indicating a corrupt or wrong file");
 	default:
 		return("unknown error");
 	
@@ -661,7 +694,7 @@ ctx->tmp_vh.metadata=metadata;
 
 offset=do_ftello(ctx->f);
 
-if((long long)offset<0) {
+if((long long int)offset<0) {
 	perror("mvl_write_vector");
 	mvl_set_error(ctx, LIBMVL_ERR_FTELL);
 	}
@@ -812,6 +845,359 @@ free(str_size2);
 return(ofs2);
 }
 
+/* The function mvl_write_hash64_checksum_vector() writes out computed hashes in blocks of LIBMVL_INTERNAL1_HASH64_BLOCKSIZE values.
+ * On some block-based storage devices it is advantageous to have the size of the written out blocks to be a multiple of device block size
+ * as this reduces actual I/O and wear.
+ * The default value below has been chosen to accomodate most known devices at the time of writing.
+ */ 
+
+#ifndef LIBMVL_INTERNAL1_HASH64_BLOCKSIZE
+#define LIBMVL_INTERNAL1_HASH64_BLOCKSIZE 65536
+#endif
+
+/*! @brief Compute and write checksums for a given area
+ *   @param ctx MVL context pointer that has been initialized for writing
+ *   @param data base address. Usually the base address of memory mapped MVL file. Must be properly aligned. A possible reason for alignment errors is mmap() returning MAP_FAILED. If data is NULL then this function will use base address from context initialized by mvl_load_image()
+ *   @param checksum_area_start byte offset of start of area to checksum. Set to 0 to checksum from beginning of MVL file. Must be multiple of 8.
+ *   @param checksum_area_stop byte offset of first entry past the end of checksummed area. Must be multiple of 8.
+ *   @param checksum_block_size byte size of checksum blocks. Must be multiple of 8.
+ *   @return an offset into the file, suitable for adding to MVL file directory, or to other MVL objects
+ */
+LIBMVL_OFFSET64 mvl_write_hash64_checksum_vector(LIBMVL_CONTEXT *ctx, void *data, LIBMVL_OFFSET64 checksum_area_start, LIBMVL_OFFSET64 checksum_area_stop, LIBMVL_OFFSET64 checksum_block_size)
+{
+LIBMVL_CHECKSUM_VECTOR_HEADER *hdr=(LIBMVL_CHECKSUM_VECTOR_HEADER *)(&ctx->tmp_vh);
+LIBMVL_OFFSET64 *buffer;
+LIBMVL_OFFSET64 byte_length, padding;
+LIBMVL_OFFSET64 buffer_idx;
+LIBMVL_OFFSET64 block, block_stop;
+LIBMVL_OFFSET64 hash;
+LIBMVL_OFFSET64 offset;
+unsigned char *data8;
+unsigned char *zeros;
+
+if(data==NULL) {
+	data=ctx->data;
+
+	if(data==NULL) {
+		mvl_set_error(ctx, LIBMVL_ERR_NO_DATA);
+		return(LIBMVL_NULL_OFFSET);
+		}
+	}
+	
+data8=(unsigned char *)data;
+
+if(((LIBMVL_OFFSET64)(data)) & 0x7) { 
+	mvl_set_error(ctx, LIBMVL_ERR_UNALIGNED_POINTER);
+	return(LIBMVL_NULL_OFFSET);
+	}
+
+if((checksum_area_start & 0x7) || (checksum_block_size & 0x7) || (checksum_area_stop & 0x7)) { 
+	mvl_set_error(ctx, LIBMVL_ERR_UNALIGNED_OFFSET);
+	return(LIBMVL_NULL_OFFSET);
+	}
+	
+memset(hdr, 0, sizeof(*hdr));
+hdr->type=LIBMVL_VECTOR_CHECKSUM;
+hdr->checksum_algorithm=LIBMVL_CHECKSUM_ALGORITHM_INTERNAL1_HASH64;
+hdr->checksum_area_start=checksum_area_start;
+hdr->checksum_area_stop=checksum_area_stop;
+hdr->checksum_block_size=checksum_block_size;
+hdr->length=(checksum_area_stop-checksum_area_start+checksum_block_size-1)/checksum_block_size;
+hdr->metadata=LIBMVL_NULL_OFFSET;
+
+byte_length=hdr->length*8;
+padding=ctx->alignment-((byte_length+sizeof(ctx->tmp_vh)) & (ctx->alignment-1));
+padding=padding & (ctx->alignment-1);
+
+	
+buffer=do_malloc(LIBMVL_INTERNAL1_HASH64_BLOCKSIZE, sizeof(*buffer));
+	
+offset=do_ftello(ctx->f);
+
+if((long long int)offset<0) {
+	perror("mvl_write_vector");
+	mvl_set_error(ctx, LIBMVL_ERR_FTELL);
+	}
+
+mvl_write(ctx, sizeof(ctx->tmp_vh), &ctx->tmp_vh);
+
+buffer_idx=0;
+for(block=checksum_area_start;block<checksum_area_stop;block+=checksum_block_size) {
+	block_stop=block+checksum_block_size;
+	if(block_stop>checksum_area_stop)block_stop=checksum_area_stop;
+
+	hash=MVL_SEED_HASH_VALUE;
+	hash=mvl_accumulate_int64_hash64(hash, (long long *)&(data8[block]), (block_stop-block)>>3);
+	hash=mvl_randomize_bits64(hash);
+
+	buffer[buffer_idx]=hash;
+	buffer_idx++;
+	
+	if(buffer_idx>=LIBMVL_INTERNAL1_HASH64_BLOCKSIZE) {
+		mvl_write(ctx, buffer_idx*sizeof(*buffer), buffer);
+		buffer_idx=0;
+		}
+	}
+	
+if(buffer_idx>0) {
+	mvl_write(ctx, buffer_idx*sizeof(*buffer), buffer);
+	buffer_idx=0;
+	}
+
+if(padding>0) {
+	zeros=alloca(padding);
+	memset(zeros, 0, padding);
+	mvl_write(ctx, padding, zeros);
+	}
+
+free(buffer);
+return(offset);
+}
+
+/*! @brief Compute and verify checksums for a given area
+ *   @param ctx MVL context pointer that has been initialized for reading
+ *   @param checksum_vector pointer to checksum vector. You can pass NULL to use full checksums.
+ *   @param data base address. Usually the base address of memory mapped MVL file. Must be properly aligned. A possible reason for alignment errors is mmap() returning MAP_FAILED. If data is NULL then this function will use base address from context initialized by mvl_load_image()
+ *   @param data_size size of data. If data is NULL then this function will use data_size from context initialized by mvl_load_image()
+ *   @param start byte offset of start of area to checksum. Must be greater or equal to the checksum_area_start field of checksum_vector
+ *   @param stop byte offset of first entry past the end of checksummed area. Must be greater or equal to start. Must be less or equal to the checksum_area_stop field of checksum_vector
+ *   @return 0 on success, non-zero number if check failed
+ */
+int mvl_verify_checksum_vector(LIBMVL_CONTEXT *ctx, const LIBMVL_VECTOR *checksum_vector, void *data, LIBMVL_OFFSET64 data_size, LIBMVL_OFFSET64 start, LIBMVL_OFFSET64 stop)
+{
+LIBMVL_CHECKSUM_VECTOR_HEADER *hdr;
+LIBMVL_OFFSET64 block, buffer_idx, block_stop, hash, start2, stop2;
+unsigned char *data8;
+LIBMVL_OFFSET64 *buffer;
+
+if(stop==start) {
+	/* Nothing to check */
+	return(0);
+	}
+	
+if(data==NULL) {
+	data=ctx->data;
+	data_size=ctx->data_size;
+
+	if(data==NULL) {
+		mvl_set_error(ctx, LIBMVL_ERR_NO_DATA);
+		return(-1);
+		}
+	}
+	
+data8=(unsigned char *)data;
+
+if(checksum_vector==NULL) {
+	if(ctx->full_checksums_offset==LIBMVL_NULL_OFFSET) {
+		mvl_set_error(ctx, LIBMVL_ERR_NO_CHECKSUMS);
+		return(-2);
+		}
+	checksum_vector=(LIBMVL_VECTOR *) &(data8[ctx->full_checksums_offset]);
+	}
+
+hdr=(LIBMVL_CHECKSUM_VECTOR_HEADER *)(checksum_vector);
+buffer=mvl_vector_data_offset(checksum_vector);
+
+if(hdr->type!=LIBMVL_VECTOR_CHECKSUM) {
+	mvl_set_error(ctx, LIBMVL_ERR_INVALID_HEADER);
+	return(-3);
+	}
+	
+if(hdr->checksum_algorithm!=LIBMVL_CHECKSUM_ALGORITHM_INTERNAL1_HASH64) {
+	mvl_set_error(ctx, LIBMVL_ERR_UNKNOWN_CHECKSUM_ALGORITHM);
+	return(-4);
+	}
+
+if(stop<start) {
+	mvl_set_error(ctx, LIBMVL_ERR_INVALID_OFFSET);
+	return(-5);
+	}
+
+if(start<hdr->checksum_area_start || stop>hdr->checksum_area_stop) {
+	mvl_set_error(ctx, LIBMVL_ERR_INVALID_OFFSET);
+	return(-6);
+	}
+	
+if(hdr->length < ((hdr->checksum_area_stop-hdr->checksum_area_start+hdr->checksum_block_size-1) / hdr->checksum_block_size)) {
+	mvl_set_error(ctx, LIBMVL_ERR_INVALID_HEADER);
+	return(-7);
+	}
+	
+start2=start-((start-hdr->checksum_area_start) % hdr->checksum_block_size);
+
+block=(stop-hdr->checksum_area_start) % hdr->checksum_block_size;
+stop2=stop;
+if(block>0)stop2+=hdr->checksum_block_size-block;
+
+if(stop2>hdr->checksum_area_stop)stop2=hdr->checksum_area_stop;
+
+if(stop2>data_size) {
+	mvl_set_error(ctx, LIBMVL_ERR_INVALID_OFFSET);
+	return(-8);
+	}
+
+buffer_idx=(start2-hdr->checksum_area_start) / hdr->checksum_block_size;
+
+for(block=start2;block<stop2;block+=hdr->checksum_block_size) {
+	
+	block_stop=block+hdr->checksum_block_size;
+	if(block_stop>hdr->checksum_area_stop)block_stop=hdr->checksum_area_stop;
+
+	hash=MVL_SEED_HASH_VALUE;
+	hash=mvl_accumulate_int64_hash64(hash, (long long *)&(data8[block]), (block_stop-block)>>3);
+	hash=mvl_randomize_bits64(hash);
+	
+	if(buffer[buffer_idx]!=hash) {
+		mvl_set_error(ctx, LIBMVL_ERR_CHECKSUM_FAILED);
+		return(-255);
+		}
+	buffer_idx++;
+	}
+	
+return(0);
+}
+
+/*! @brief Compute and verify checksums for the entire area covered by checksum vector
+ *   @param ctx MVL context pointer that has been initialized for reading
+ *   @param checksum_vector pointer to checksum vector. You can pass NULL to use full checksums.
+ *   @param data base address. Usually the base address of memory mapped MVL file. Must be properly aligned. A possible reason for alignment errors is mmap() returning MAP_FAILED. If data is NULL then this function will use base address from context initialized by mvl_load_image()
+ *   @param data_size size of data. If data is NULL then this function will use data_size from context initialized by mvl_load_image()
+ *   @return 0 on success, non-zero number if check failed
+ */
+int mvl_verify_full_checksum_vector(LIBMVL_CONTEXT *ctx, const LIBMVL_VECTOR *checksum_vector, void *data, LIBMVL_OFFSET64 data_size)
+{
+LIBMVL_CHECKSUM_VECTOR_HEADER *hdr;
+unsigned char *data8;
+
+if(data==NULL) {
+	data=ctx->data;
+	data_size=ctx->data_size;
+	
+	if(data==NULL) {
+		mvl_set_error(ctx, LIBMVL_ERR_NO_DATA);
+		return(-1);
+		}
+	}
+
+	
+data8=(unsigned char *)data;
+
+if(checksum_vector==NULL) {
+	if(ctx->full_checksums_offset==LIBMVL_NULL_OFFSET) {
+		mvl_set_error(ctx, LIBMVL_ERR_NO_CHECKSUMS);
+		return(-2);
+		}
+	checksum_vector=(LIBMVL_VECTOR *) &(data8[ctx->full_checksums_offset]);
+	}
+	
+hdr=(LIBMVL_CHECKSUM_VECTOR_HEADER *)(checksum_vector);
+
+if(hdr->type!=LIBMVL_VECTOR_CHECKSUM) {
+	mvl_set_error(ctx, LIBMVL_ERR_INVALID_HEADER);
+	return(-3);
+	}
+	
+return(mvl_verify_checksum_vector(ctx, checksum_vector, data, data_size, hdr->checksum_area_start, hdr->checksum_area_stop));
+}
+
+/*! @brief Compute and verify checksums for the entire area occupied by given LIBMVL_VECTOR. Metadata is not checked.
+ *   @param ctx MVL context pointer that has been initialized for reading
+ *   @param checksum_vector pointer to checksum vector. You can pass NULL to use full checksums.
+ *   @param data base address. Usually the base address of memory mapped MVL file. Must be properly aligned. A possible reason for alignment errors is mmap() returning MAP_FAILED. If data is NULL then this function will use base address from context initialized by mvl_load_image()
+ *   @param data_size size of data. If data is NULL then this function will use data_size from context initialized by mvl_load_image()
+ *   @param vector_offset offset from base pointing to valid LIBMVL_VECTOR
+ *   @return 0 on success, negative number if check failed
+ */
+int mvl_verify_checksum_vector2(LIBMVL_CONTEXT *ctx, const LIBMVL_VECTOR *checksum_vector, void *data, LIBMVL_OFFSET64 data_size, LIBMVL_OFFSET64 vector_offset)
+{
+int err;
+LIBMVL_OFFSET64 byte_length;
+LIBMVL_VECTOR_HEADER *vec;
+char *data8;
+int element_size;
+int a;
+
+if(data==NULL) {
+	data=ctx->data;
+	data_size=ctx->data_size;
+	
+	if(data==NULL) {
+		mvl_set_error(ctx, LIBMVL_ERR_NO_DATA);
+		return(-1);
+		}
+	}
+	
+	
+data8=(char *)data;
+
+if((err=mvl_validate_vector(vector_offset, data, data_size))!=0) {
+	mvl_set_error(ctx, err);
+	return(-50);
+	}
+	
+if(checksum_vector==NULL) {
+	if(ctx->full_checksums_offset==LIBMVL_NULL_OFFSET) {
+		mvl_set_error(ctx, LIBMVL_ERR_NO_CHECKSUMS);
+		return(-1);
+		}
+	checksum_vector=(LIBMVL_VECTOR *) &(data8[ctx->full_checksums_offset]);
+	}	
+
+vec=(LIBMVL_VECTOR_HEADER *)&(data8[vector_offset]);
+
+element_size=mvl_element_size(mvl_vector_type(vec));
+
+if(!element_size) {
+	mvl_set_error(ctx, LIBMVL_ERR_UNKNOWN_TYPE);
+	return(-51);
+	}
+
+byte_length=element_size*mvl_vector_length(vec);
+	
+if((a=mvl_verify_checksum_vector(ctx, checksum_vector, data, data_size, vector_offset, vector_offset+byte_length+sizeof(*vec))))return(a);
+
+if(mvl_vector_type(vec)==LIBMVL_PACKED_LIST64) {
+	return(mvl_verify_checksum_vector2(ctx, checksum_vector, data, data_size, mvl_vector_data_offset(vec)[0]-sizeof(LIBMVL_VECTOR_HEADER)));
+	}
+	
+return(0);
+}
+
+/*! @brief Compute and verify checksums for a given area. It works just like mvl_verify_checksum_vector() but takes pointers instead of offsets
+ *   @param ctx MVL context pointer that has been initialized for reading
+ *   @param checksum_vector pointer to checksum vector. You can pass NULL to use full checksums.
+ *   @param data base address. Usually the base address of memory mapped MVL file. Must be properly aligned. A possible reason for alignment errors is mmap() returning MAP_FAILED. If data is NULL then this function will use base address from context initialized by mvl_load_image()
+ *   @param data_size size of data. If data is NULL then this function will use data_size from context initialized by mvl_load_image()
+ *   @param start pointer to start of area to checksum. 
+ *   @param stop pointer to first entry past the end of checksummed area. 
+ *   @return 0 on success, non-zero number if check failed
+ */
+int mvl_verify_checksum_vector3(LIBMVL_CONTEXT *ctx, const LIBMVL_VECTOR *checksum_vector, void *data, LIBMVL_OFFSET64 data_size, void * start, void * stop)
+{
+char *data8;
+char *start8=(char *)start;
+char *stop8=(char *)stop;
+
+if(data==NULL) {
+	data=ctx->data;
+	data_size=ctx->data_size;
+	
+	if(data==NULL) {
+		mvl_set_error(ctx, LIBMVL_ERR_NO_DATA);
+		return(-1);
+		}
+	}
+
+	
+data8=(char *)data;
+
+if( (start8-data8 < 0) || (start8-data8>data_size) || (stop8-data8<0) || (stop8-data8>data_size)) {
+	mvl_set_error(ctx, LIBMVL_ERR_INVALID_OFFSET);
+	return(-40);
+	}
+return(mvl_verify_checksum_vector(ctx, checksum_vector, data, data_size, start8-data8, stop8-data8));
+}
+
 /*! @brief Get offset to metadata describing R-style character class - an array of strings. This is convenient for writing columns of strings to be analyzed with R - just provide this offset as the metadata field of mvl_write_packed_list()
  *   @param ctx MVL context pointer that has been initialized for writing
  *   @return an offset into the file, suitable for specifying as MVL object metadata
@@ -901,7 +1287,7 @@ for(int i=0;i<ctx->directory->free;i++) {
 	
 cur=do_ftello(ctx->f);
 
-if((long long)cur<0) {
+if((long long int)cur<0) {
 	perror("mvl_write_directory");
 	mvl_set_error(ctx, LIBMVL_ERR_FTELL);
 	}
@@ -1183,8 +1569,8 @@ return(list_offset);
 /* This is meant to operate on memory mapped files */
 /*! @brief Read back MVL attributes list, typically used to described metadata. This function also initialize hash table for fast access. This function does not check that the offsets stored in returned LIBMVL_NAMED_LIST data structure are valid, this should be done by the code that uses those offsets.
  *   @param ctx MVL context pointer
- *   @param data memory mapped data
- *   @param data_size size of memory mapped data
+ *   @param data memory mapped data. If data is NULL then this function will use base address from context initialized by mvl_load_image()
+ *   @param data_size size of memory mapped data. If data is NULL then this function will use data_size from context initialized by mvl_load_image()
  *   @param metadata_offset metadata offset pointing to the previously written attributes
  *   @return NULL if there is no metadata, otherwise LIBMVL_NAMED_LIST populated with attributes
  */
@@ -1196,6 +1582,17 @@ char *p, *d;
 int err;
 
 if(metadata_offset==LIBMVL_NO_METADATA)return(NULL);
+
+if(data==NULL) {
+	data=ctx->data;
+	data_size=ctx->data_size;
+	
+	if(data==NULL) {
+		mvl_set_error(ctx, LIBMVL_ERR_NO_DATA);
+		return(NULL);
+		}
+	}
+	
 
 if((err=mvl_validate_vector(metadata_offset, data, data_size))!=0) {
 	mvl_set_error(ctx, LIBMVL_ERR_INVALID_OFFSET);
@@ -1242,8 +1639,8 @@ return(L);
 /* This is meant to operate on memory mapped files */
 /*! @brief Read back MVL named list. This function also initialize hash table for fast access.
  *   @param ctx MVL context pointer
- *   @param data memory mapped data
- *   @param data_size size of memory mapped data
+ *   @param data memory mapped data. If data is NULL then this function will use base address from context initialized by mvl_load_image()
+ *   @param data_size size of memory mapped data. ggIf data is NULL then this function will use data_size from context initialized by mvl_load_image()
  *   @param offset offset into data where LIBMVL_NAMED_LIST begins
  *   @return NULL on error, otherwise LIBMVL_NAMED_LIST
  */
@@ -1256,6 +1653,17 @@ long i, nelem;
 int err;
 
 if(offset==LIBMVL_NULL_OFFSET)return(NULL);
+
+if(data==NULL) {
+	data=ctx->data;
+	data_size=ctx->data_size;
+	
+	if(data==NULL) {
+		mvl_set_error(ctx, LIBMVL_ERR_NO_DATA);
+		return(NULL);
+		}
+	}
+	
 
 if((err=mvl_validate_vector(offset, data, data_size))!=0) {
 	mvl_set_error(ctx, LIBMVL_ERR_INVALID_OFFSET);
@@ -1414,8 +1822,16 @@ if(pr->endianness!=LIBMVL_ENDIANNESS_FLAG) {
 	mvl_set_error(ctx, LIBMVL_ERR_WRONG_ENDIANNESS);
 	return;
 	}
+	
+if(length<sizeof(LIBMVL_POSTAMBLE)+sizeof(LIBMVL_PREAMBLE)) {
+	mvl_set_error(ctx, LIBMVL_ERR_MVL_FILE_TOO_SHORT);
+	return;
+	}
 
 //fprintf(stderr, "Reading MVL directory at offset 0x%08llx\n", pa->directory);
+
+ctx->data=(unsigned char *)data;
+ctx->data_size=length;
 
 mvl_free_named_list(ctx->directory);
 
@@ -1431,7 +1847,7 @@ switch(pa->type) {
 		if(ctx->directory==NULL)
 			ctx->directory=mvl_create_named_list(100);
 		break;
-#ifdef MVL_OLD_DIRECTORY
+#ifdef MVL_READ_OLD_DIRECTORY
 	case LIBMVL_VECTOR_POSTAMBLE1:
 		dir=(LIBMVL_VECTOR *)&(((unsigned char *)data)[pa->directory]);
 		k=dir->header.length>>1;
@@ -1469,6 +1885,12 @@ switch(pa->type) {
 		ctx->directory=mvl_create_named_list(100);
 		mvl_set_error(ctx, LIBMVL_ERR_CORRUPT_POSTAMBLE);
 		return;
+	}
+	
+ctx->full_checksums_offset=mvl_find_directory_entry(ctx, LIBMVL_FULL_CHECKSUMS_DIRECTORY_KEY);
+if((ctx->full_checksums_offset!=LIBMVL_NULL_OFFSET) && (err=mvl_validate_vector(ctx->full_checksums_offset, data, length))) {
+	mvl_set_error(ctx, err);
+	ctx->full_checksums_offset=LIBMVL_NULL_OFFSET;
 	}
 }
 
@@ -2860,7 +3282,7 @@ switch(mvl_vector_type(vec)) {
 		stats->min=a0;
 		stats->center=(a0+a1)*0.5;
 		if(a1>a0)
-			stats->scale=2/(a1-a0);
+			stats->scale=2.0/(a1-a0);
 			else
 			stats->scale=0.0;
 		break;
@@ -2890,7 +3312,7 @@ switch(mvl_vector_type(vec)) {
 		stats->min=a0;
 		stats->center=(a0+a1)*0.5;
 		if(a1>a0)
-			stats->scale=2/(a1-a0);
+			stats->scale=2.0/(a1-a0);
 			else
 			stats->scale=0.0;
 		break;
@@ -2920,7 +3342,7 @@ switch(mvl_vector_type(vec)) {
 		stats->min=a0;
 		stats->center=(a0*1.0+a1*1.0)*0.5;
 		if(a1>a0)
-			stats->scale=2/(a1-a0);
+			stats->scale=2.0/(a1-a0);
 			else
 			stats->scale=0.0;
 		break;
@@ -2950,7 +3372,7 @@ switch(mvl_vector_type(vec)) {
 		stats->min=a0;
 		stats->center=(a0*1.0+a1*1.0)*0.5;
 		if(a1>a0)
-			stats->scale=2/(a1-a0);
+			stats->scale=2.0/(a1-a0);
 			else
 			stats->scale=0.0;
 		break;

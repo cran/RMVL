@@ -60,6 +60,7 @@ extern "C" {
 #define LIBMVL_VECTOR_CSTRING	101    
 
 #define LIBMVL_PACKED_LIST64 	102     
+#define LIBMVL_VECTOR_CHECKSUM 	103
 
 
 #define LIBMVL_VECTOR_POSTAMBLE1 1000		/* Old format using DIRECTORY_ENTRY */
@@ -84,6 +85,7 @@ switch(type) {
 	case LIBMVL_VECTOR_OFFSET64:
 	case LIBMVL_VECTOR_DOUBLE:
 	case LIBMVL_PACKED_LIST64:
+	case LIBMVL_VECTOR_CHECKSUM:
 		return 8;
 	default:
 		return(0);
@@ -121,6 +123,34 @@ typedef struct {
 	int reserved[11];
 	LIBMVL_OFFSET64 metadata;
 	} LIBMVL_VECTOR_HEADER;
+
+
+/*!
+ *  @def LIBMVL_CHECKSUM_ALGORITHM_INTERNAL1_HASH64
+ * 	Checksum algorithm based on fast LIBMVL 64-bit hash function
+ */	
+#define LIBMVL_CHECKSUM_ALGORITHM_INTERNAL1_HASH64	1
+
+
+/*!
+ *  @def LIBMVL_FULL_CHECKSUMS_DIRECTORY_KEY
+ * 	The directory entry with this name is interpreted as providing full checksums for MVL file.
+ */	
+#define LIBMVL_FULL_CHECKSUMS_DIRECTORY_KEY "MVL_FULL_CHECKSUMS"
+
+
+/*! @brief This structure describes the header of MVL checksum vector. 
+ */
+typedef struct {
+	LIBMVL_OFFSET64 length;
+	int type;
+	int checksum_algorithm;
+	LIBMVL_OFFSET64 checksum_area_start;
+	LIBMVL_OFFSET64 checksum_area_stop;
+	LIBMVL_OFFSET64 checksum_block_size;
+	int reserved[4];
+	LIBMVL_OFFSET64 metadata;
+	} LIBMVL_CHECKSUM_VECTOR_HEADER;
 	
 #ifndef MVL_STATIC_MEMBERS
 	
@@ -228,12 +258,16 @@ typedef struct {
 
 	LIBMVL_NAMED_LIST *directory;	
 	LIBMVL_OFFSET64 directory_offset;
+	LIBMVL_OFFSET64 full_checksums_offset;
 
 	LIBMVL_NAMED_LIST *cached_strings;
 	
 	LIBMVL_OFFSET64 character_class_offset;
 	
 	FILE *f;
+	
+	unsigned char *data;
+	LIBMVL_OFFSET64 data_size;
 	
 	
 	LIBMVL_PREAMBLE tmp_preamble;
@@ -245,6 +279,17 @@ typedef struct {
 	
 	} LIBMVL_CONTEXT;
 	
+/*! \def MVL_CONTEXT_DATA
+ *   Returns pointer to in-memory image of MVL file loaded with mvl_load_image()
+ */
+#define MVL_CONTEXT_DATA(ctx) (ctx->data)
+
+/*! \def MVL_CONTEXT_DATA_SIZE
+ *   Returns size of in-memory image of MVL file loaded with mvl_load_image()
+ */
+#define MVL_CONTEXT_DATA_SIZE(ctx) (ctx->data_size)
+
+
 #define LIBMVL_CTX_FLAG_HAVE_POSIX_FALLOCATE	 (1<<0)
 #define LIBMVL_CTX_FLAG_HAVE_FTELLO	 	 (1<<1)
 	
@@ -267,9 +312,36 @@ typedef struct {
 #define LIBMVL_ERR_INVALID_LENGTH	-17
 #define LIBMVL_ERR_INVALID_EXTENT_INDEX	-18
 #define LIBMVL_ERR_CORRUPT_PACKED_LIST	-19
-	
+#define LIBMVL_ERR_UNALIGNED_POINTER	-20
+#define LIBMVL_ERR_UNALIGNED_OFFSET	-21
+#define LIBMVL_ERR_INVALID_HEADER	-22
+#define LIBMVL_ERR_UNKNOWN_CHECKSUM_ALGORITHM	-23
+#define LIBMVL_ERR_CHECKSUM_FAILED	-24
+#define LIBMVL_ERR_NO_CHECKSUMS		-25
+#define LIBMVL_ERR_NO_DATA		-26
+#define LIBMVL_ERR_MVL_FILE_TOO_SHORT	-27
+
 LIBMVL_CONTEXT *mvl_create_context(void);
 void mvl_free_context(LIBMVL_CONTEXT *ctx);
+
+
+/*! @brief Obtain integer error code
+ *  @param ctx pointer to context previously allocated with mvl_create_context()
+ *  @return integer error code
+ */
+static inline int mvl_get_error(LIBMVL_CONTEXT *ctx)
+{
+return ctx->error;
+}
+
+/*! @brief Clear error code
+ *  @param ctx pointer to context previously allocated with mvl_create_context()
+ *  @return none
+ */
+static inline void mvl_clear_error(LIBMVL_CONTEXT *ctx)
+{
+ctx->error=0;
+}
 
 const char * mvl_strerror(LIBMVL_CONTEXT *ctx);
 
@@ -311,6 +383,18 @@ LIBMVL_OFFSET64 mvl_write_cached_string(LIBMVL_CONTEXT *ctx, long length, const 
  * str_size can be either NULL or provide string length, some of which can be -1 
  */
 LIBMVL_OFFSET64 mvl_write_packed_list(LIBMVL_CONTEXT *ctx, long count, const long *str_size, unsigned char **str, LIBMVL_OFFSET64 metadata);
+
+/* Compute and write checksum vector */
+LIBMVL_OFFSET64 mvl_write_hash64_checksum_vector(LIBMVL_CONTEXT *ctx, void *base, LIBMVL_OFFSET64 checksum_area_start, LIBMVL_OFFSET64 checksum_area_stop, LIBMVL_OFFSET64 checksum_block_size);
+
+/* Verify checksum for a given mapped area, could be just a portion of LIBMVL_VECTOR */
+int mvl_verify_checksum_vector(LIBMVL_CONTEXT *ctx, const LIBMVL_VECTOR *checksum_vector, void *data, LIBMVL_OFFSET64 data_size, LIBMVL_OFFSET64 start, LIBMVL_OFFSET64 stop);
+/* Verify all area covered by checksums */
+int mvl_verify_full_checksum_vector(LIBMVL_CONTEXT *ctx, const LIBMVL_VECTOR *checksum_vector, void *data, LIBMVL_OFFSET64 data_size);
+/* Verify a single LIBMVL_VECTOR */
+int mvl_verify_checksum_vector2(LIBMVL_CONTEXT *ctx, const LIBMVL_VECTOR *checksum_vector, void *data, LIBMVL_OFFSET64 data_size, LIBMVL_OFFSET64 vector_offset);
+/* Verify checksum for a given mapped area between pointers */
+int mvl_verify_checksum_vector3(LIBMVL_CONTEXT *ctx, const LIBMVL_VECTOR *checksum_vector, void *data, LIBMVL_OFFSET64 data_size, void *start, void * stop); 
 
 /* This is convenient for writing several values of the same type as vector without allocating a temporary array.
  * This function creates the array internally using alloca().
@@ -456,12 +540,13 @@ return((mvl_vector_type(vec0)==LIBMVL_PACKED_LIST64) ? N-1 : N);
  */
 static inline int mvl_validate_vector(LIBMVL_OFFSET64 offset, const void *data, LIBMVL_OFFSET64 data_size) {
 LIBMVL_VECTOR *vec;
+int element_size;
 if(offset+sizeof(LIBMVL_VECTOR_HEADER)>data_size)return(LIBMVL_ERR_INVALID_OFFSET);
 vec=(LIBMVL_VECTOR *)&(((unsigned char *)data)[offset]);
 
-if(!mvl_element_size(mvl_vector_type(vec)))return LIBMVL_ERR_UNKNOWN_TYPE;
+if(!(element_size=mvl_element_size(mvl_vector_type(vec))))return LIBMVL_ERR_UNKNOWN_TYPE;
 
-if(offset+sizeof(LIBMVL_VECTOR_HEADER)+mvl_vector_length(vec)>data_size)return(LIBMVL_ERR_INVALID_LENGTH);
+if(offset+sizeof(LIBMVL_VECTOR_HEADER)+mvl_vector_length(vec)*element_size>data_size)return(LIBMVL_ERR_INVALID_LENGTH);
 
 if(mvl_vector_type(vec)==LIBMVL_PACKED_LIST64) {
 	/* We check the first and last pointer of the packed list, as checking all the entries is inefficient
@@ -482,6 +567,14 @@ if(mvl_vector_type(vec)==LIBMVL_PACKED_LIST64) {
 	}
 
 return(0);
+}
+
+/*! @brief A convenience version of mvl_validate_vector() that uses data and data_size from MVL context. This function returns 0 if the offset into data points to a valid vector, or a negative error code otherwise. 
+ *  @param ctx  MVL context pointer
+ *  @param offset an offset into memory mapped data where the LIBMVL_VECTOR is located
+ */
+static inline int mvl_validate_vector2(LIBMVL_CONTEXT *ctx, LIBMVL_OFFSET64 offset) {
+return(mvl_validate_vector(offset, MVL_CONTEXT_DATA(ctx), MVL_CONTEXT_DATA_SIZE(ctx)));
 }
 
 /*! @brief A convenience function to convert an offset into memory mapped data into a pointer to LIBMVL_VECTOR structure.
@@ -752,7 +845,6 @@ LIBMVL_OFFSET64 mvl_find_directory_entry(LIBMVL_CONTEXT *ctx, const char *tag);
  * the image could have been loaded via fread, or memory mapped
  */
 void mvl_load_image(LIBMVL_CONTEXT *ctx, const void *data, LIBMVL_OFFSET64 length);
-
 
 /*! @def LIBMVL_SORT_LEXICOGRAPHIC
  *  Sort in ascending order
