@@ -1,4 +1,4 @@
-003373f4b8ea99ceffe440a9251c5fc0 *DESCRIPTION
+2a0b99cc778474ea1ca9fae51f47fc63 *DESCRIPTION
 f26a80052e91bfc7d226a5ad50f9a42f *NAMESPACE
 becc9b545d955e90edb85349b6b24525 *R/RMVL.R
 7ab68c5fa4b05a7f3a4ec714782534d3 *man/cash-.MVL.Rd
@@ -40,6 +40,7 @@ e17b29040d190b5d3e3a5d33a461e0f5 *man/mvl_write_spatial_index1.Rd
 d8acc28f5228b9f55467a5375a1323ed *man/names.MVL.Rd
 12d5c54f3c4cc85d23c6879d66ef6229 *man/names.MVL_OBJECT.Rd
 94d079a72eacffca65a78641dc439125 *man/print.MVL.Rd
+9a2b1ad106c21e18e0ab3f6f3e5d1b14 *man/print.MVL_INDEX.Rd
 af0b437d0bb44e4be9c0c46743551b79 *man/print.MVL_OBJECT.Rd
 8c75528ea8e69979430bb81470952553 *man/sub-.MVL.Rd
 d855f6b0966d3c70797d698faee62449 *man/sub-.MVL_OBJECT.Rd
@@ -48,7 +49,7 @@ dbc2d049b1280df39697805a992802c2 *man/sub-sub-.MVL_OBJECT.Rd
 d7d46846785df805a2a426e7ab3ff97b *src/RlibMVL.c
 9304a42fd3686fe2b0655ddb8d1f27cb *src/libMVL.c
 a0f2398b4de5dc8a91463835ef903c06 *src/libMVL.h
-21c23bf98a121ffb27b88e795d80208e *src/libMVL_sort.cc
+46207cac5f3ff8f7bb03ca7dab7541de *src/libMVL_sort.cc
 40f20f830206a905ac8f0698d723c853 *src/pdqidxsort.h
 af28f79d5d7d7a5486f54d9f1244c2b5 *src/pdqsort.h
 a1e886b65943033dab501528433ee35d *tests/test_block_write.R
